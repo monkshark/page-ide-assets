@@ -34,15 +34,29 @@
   }
   .controls input { min-width: 220px; }
   .controls .count { color: var(--muted); font-size: 13px; margin-left: auto; }
-  .release { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; }
-  .release-head { padding: 14px 18px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .lang-group { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+  .lang-group > summary {
+    list-style: none; cursor: pointer; user-select: none;
+    padding: 16px 18px; display: flex; align-items: center; gap: 12px;
+  }
+  .lang-group > summary::-webkit-details-marker { display: none; }
+  .lang-group > summary::before {
+    content: "▸"; color: var(--muted); font-size: 12px; transition: transform 120ms ease;
+    display: inline-block; width: 12px; text-align: center;
+  }
+  .lang-group[open] > summary::before { transform: rotate(90deg); }
+  .lang-group .lang-name { font-size: 16px; font-weight: 600; }
+  .lang-group .lang-meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .lang-body { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 12px; }
+  .release { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
+  .release-head { padding: 12px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .release-head .tag { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; font-weight: 600; }
   .release-head .badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; }
   .badge-stable { background: rgba(46, 160, 67, 0.18); color: #56d364; }
   .badge-pre { background: rgba(210, 153, 34, 0.18); color: var(--warn); }
   .badge-draft { background: rgba(139, 148, 158, 0.18); color: var(--muted); }
   .release-head .when { color: var(--muted); font-size: 12px; }
-  .release-body { padding: 0 18px 14px; }
+  .release-body { padding: 0 16px 12px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { padding: 8px 10px; text-align: left; border-top: 1px solid var(--border); vertical-align: top; }
   th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -115,6 +129,27 @@
     return { language: m[1], tool: m[2], os: m[3], arch: m[4], version: m[5], ext: m[6] };
   }
 
+  const LANGUAGE_LABELS = {
+    scala: "Scala", java: "Java", dart: "Dart", flutter: "Flutter",
+    ruby: "Ruby", kotlin: "Kotlin", rust: "Rust", go: "Go",
+    python: "Python", typescript: "TypeScript", javascript: "JavaScript",
+    cpp: "C++", csharp: "C#", fsharp: "F#", ocaml: "OCaml",
+    haskell: "Haskell", elixir: "Elixir", erlang: "Erlang",
+    perl: "Perl", swift: "Swift", r: "R",
+  };
+
+  function languageLabel(slug) {
+    return LANGUAGE_LABELS[slug] || (slug.charAt(0).toUpperCase() + slug.slice(1));
+  }
+
+  function languageOfRelease(rel) {
+    for (const a of rel.assets || []) {
+      const parsed = parseAssetName(a.name);
+      if (parsed) return parsed.language;
+    }
+    return "other";
+  }
+
   function badgeFor(rel) {
     if (rel.draft) return `<span class="badge badge-draft">draft</span>`;
     if (rel.prerelease) return `<span class="badge badge-pre">prerelease</span>`;
@@ -157,6 +192,31 @@
     `;
   }
 
+  function renderGroupedReleases(releases) {
+    const groups = new Map();
+    for (const rel of releases) {
+      const lang = languageOfRelease(rel);
+      if (!groups.has(lang)) groups.set(lang, []);
+      groups.get(lang).push(rel);
+    }
+    const sorted = [...groups.entries()].sort((a, b) =>
+      languageLabel(a[0]).localeCompare(languageLabel(b[0]))
+    );
+    return sorted.map(([lang, rels]) => {
+      const assetCount = rels.reduce((n, r) => n + (r.assets?.length || 0), 0);
+      const meta = `${rels.length} release(s) · ${assetCount} asset(s)`;
+      return `
+        <details class="lang-group" data-lang="${lang}" open>
+          <summary>
+            <span class="lang-name">${languageLabel(lang)}</span>
+            <span class="lang-meta">${meta}</span>
+          </summary>
+          <div class="lang-body">${rels.map(renderRelease).join("")}</div>
+        </details>
+      `;
+    }).join("");
+  }
+
   function populateTagFilter() {
     const tags = [...new Set(allReleases.map(r => r.tag_name))].sort();
     for (const t of tags) {
@@ -169,6 +229,7 @@
   function applyFilters() {
     const q = els.q.value.trim().toLowerCase();
     const tag = els.tagFilter.value;
+    const isFiltering = q.length > 0 || tag.length > 0;
     let shownReleases = 0;
     let shownAssets = 0;
     document.querySelectorAll(".release").forEach(sec => {
@@ -183,7 +244,16 @@
       sec.style.display = show ? "" : "none";
       if (show) { shownReleases++; shownAssets += visibleRows; }
     });
-    els.count.textContent = `${shownReleases} release(s), ${shownAssets} asset(s)`;
+    let shownLangs = 0;
+    document.querySelectorAll(".lang-group").forEach(group => {
+      const visibleReleases = [...group.querySelectorAll(".release")].filter(r => r.style.display !== "none").length;
+      group.style.display = visibleReleases > 0 ? "" : "none";
+      if (visibleReleases > 0) {
+        shownLangs++;
+        if (isFiltering && !group.open) group.open = true;
+      }
+    });
+    els.count.textContent = `${shownLangs} language(s), ${shownReleases} release(s), ${shownAssets} asset(s)`;
   }
 
   async function load() {
@@ -197,7 +267,7 @@
         els.releases.innerHTML = `<div class="empty">No releases yet.</div>`;
         return;
       }
-      els.releases.innerHTML = allReleases.map(renderRelease).join("");
+      els.releases.innerHTML = renderGroupedReleases(allReleases);
       populateTagFilter();
       applyFilters();
     } catch (e) {
