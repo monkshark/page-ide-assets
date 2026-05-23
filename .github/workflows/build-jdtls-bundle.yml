@@ -1,0 +1,132 @@
+name: Build JDT-LS bundle (noarch)
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_version:
+        description: 'Minimum milestone version to build (inclusive, e.g. 1.30.0). Set to 1.0.0 to build all 1.x milestones.'
+        default: '1.30.0'
+        required: true
+      release_tag:
+        description: 'GitHub release tag (groups JDT-LS bundles)'
+        default: 'jdtls-bundle'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  enumerate:
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.list.outputs.versions }}
+    steps:
+      - name: Fetch milestone listing from download.eclipse.org
+        id: list
+        shell: bash
+        run: |
+          set -euo pipefail
+          html=$(curl -sSfL 'https://download.eclipse.org/jdtls/milestones/?d')
+          all=$(echo "$html" \
+            | grep -oE 'href="[0-9]+\.[0-9]+\.[0-9]+/?"' \
+            | sed -E 's|href="([^"/]+)/?"|\1|' \
+            | sort -u)
+          min='${{ inputs.min_version }}'
+          filtered=$(echo "$all" | awk -v min="$min" '
+            function vercmp(a, b,   ai, bi, n, m, i, lim) {
+              n = split(a, ai, ".")
+              m = split(b, bi, ".")
+              lim = (n < m) ? n : m
+              for (i = 1; i <= lim; i++) {
+                if (ai[i]+0 < bi[i]+0) return -1
+                if (ai[i]+0 > bi[i]+0) return 1
+              }
+              return n - m
+            }
+            { if (vercmp($0, min) >= 0) print $0 }
+          ' | sort -V)
+          if [ -z "$filtered" ]; then
+            echo "::error::No milestone versions matched min=$min"
+            exit 1
+          fi
+          json=$(echo "$filtered" | jq -R . | jq -s -c .)
+          echo "versions=$json" >> "$GITHUB_OUTPUT"
+          echo "Versions ($(echo "$filtered" | wc -l) total): $json"
+
+  build:
+    needs: enumerate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        version: ${{ fromJSON(needs.enumerate.outputs.versions) }}
+    steps:
+      - name: Resolve upstream tarball filename
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://download.eclipse.org/jdtls/milestones/${{ matrix.version }}/?d"
+          html=$(curl -sSfL "$url")
+          filename=$(echo "$html" \
+            | grep -oE 'jdt-language-server-[0-9][0-9.]*-[0-9]+\.tar\.gz' \
+            | sort -u | head -n1)
+          if [ -z "$filename" ]; then
+            echo "::error::No tarball found at $url"
+            exit 1
+          fi
+          echo "Resolved filename: $filename"
+          echo "filename=$filename" >> "$GITHUB_OUTPUT"
+
+      - name: Download upstream tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://download.eclipse.org/jdtls/milestones/${{ matrix.version }}/${{ steps.resolve.outputs.filename }}"
+          echo "Downloading $url"
+          curl -sSfL -o upstream.tar.gz "$url"
+          ls -lh upstream.tar.gz
+
+      - name: Repack with PAGE manifest
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir bundle
+          tar -xzf upstream.tar.gz -C bundle
+          cat > bundle/page-bundle-manifest.json <<EOF
+          {
+            "jdtls_version": "${{ matrix.version }}",
+            "upstream_filename": "${{ steps.resolve.outputs.filename }}",
+            "upstream_url": "https://download.eclipse.org/jdtls/milestones/${{ matrix.version }}/${{ steps.resolve.outputs.filename }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "built_by": "github-actions / ${{ github.workflow }} / ${{ github.run_id }}"
+          }
+          EOF
+          outname="page-java-jdtls-noarch-noarch-${{ matrix.version }}.tar.gz"
+          tar -czf "$outname" -C bundle .
+          ls -lh "$outname"
+          echo "outname=$outname" >> "$GITHUB_OUTPUT"
+
+      - name: Upload as release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: Eclipse JDT Language Server bundles
+          make_latest: false
+          body: |
+            Prebuilt Eclipse JDT Language Server (noarch) bundles, auto-fetched by
+            [PAGE IDE](https://github.com/monkshark/page-ide)'s `JdtlsInstaller`.
+
+            Assets are added to this tag as new JDT-LS milestones are built. Each
+            asset is a tar.gz whose root contains the JDT-LS tree (`bin/`,
+            `config_*/`, `features/`, `plugins/`, `page-bundle-manifest.json`).
+
+            JDT-LS ships as a noarch JAR + launcher distribution, so `os` and
+            `arch` are both `noarch` in the filename. PAGE IDE's installer
+            matches the noarch slot when no OS/arch-specific bundle is found.
+
+            See the repository [README](https://github.com/monkshark/page-ide-assets#readme).
+          files: ${{ steps.pack.outputs.outname }}
+          fail_on_unmatched_files: true

@@ -1,0 +1,157 @@
+name: Build Dart SDK bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_version:
+        description: 'Minimum Dart stable version to build (inclusive, e.g. 3.0.0).'
+        default: '3.0.0'
+        required: true
+      release_tag:
+        description: 'GitHub release tag (groups Dart SDK bundles)'
+        default: 'dart-sdk-bundle'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  enumerate:
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.list.outputs.versions }}
+    steps:
+      - name: Fetch stable channel from GCS API
+        id: list
+        shell: bash
+        run: |
+          set -euo pipefail
+          page_token=''
+          versions=''
+          while :; do
+            qs="prefix=channels/stable/release/&delimiter=/&maxResults=1000"
+            if [ -n "$page_token" ]; then
+              qs="$qs&pageToken=$page_token"
+            fi
+            resp=$(curl -sSfL "https://storage.googleapis.com/storage/v1/b/dart-archive/o?$qs")
+            chunk=$(echo "$resp" | jq -r '.prefixes // [] | .[]' \
+              | sed -E 's|^channels/stable/release/||; s|/$||' \
+              | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)
+            versions=$(printf '%s\n%s\n' "$versions" "$chunk")
+            page_token=$(echo "$resp" | jq -r '.nextPageToken // empty')
+            if [ -z "$page_token" ]; then break; fi
+          done
+          all=$(echo "$versions" | grep -v '^$' | sort -u)
+          min='${{ inputs.min_version }}'
+          filtered=$(echo "$all" | awk -v min="$min" '
+            function vercmp(a, b,   ai, bi, n, m, i, lim) {
+              n = split(a, ai, ".")
+              m = split(b, bi, ".")
+              lim = (n < m) ? n : m
+              for (i = 1; i <= lim; i++) {
+                if (ai[i]+0 < bi[i]+0) return -1
+                if (ai[i]+0 > bi[i]+0) return 1
+              }
+              return n - m
+            }
+            { if (vercmp($0, min) >= 0) print $0 }
+          ' | sort -V)
+          if [ -z "$filtered" ]; then
+            echo "::error::No Dart versions matched min=$min"
+            exit 1
+          fi
+          json=$(echo "$filtered" | jq -R . | jq -s -c .)
+          echo "versions=$json" >> "$GITHUB_OUTPUT"
+          echo "Versions ($(echo "$filtered" | wc -l) total): $json"
+
+  build:
+    needs: enumerate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        version: ${{ fromJSON(needs.enumerate.outputs.versions) }}
+        target:
+          - { page_os: linux,   page_arch: x86_64,  dart_os: linux,   dart_arch: x64,   ext: tar.gz }
+          - { page_os: linux,   page_arch: aarch64, dart_os: linux,   dart_arch: arm64, ext: tar.gz }
+          - { page_os: macos,   page_arch: x86_64,  dart_os: macos,   dart_arch: x64,   ext: tar.gz }
+          - { page_os: macos,   page_arch: aarch64, dart_os: macos,   dart_arch: arm64, ext: tar.gz }
+          - { page_os: windows, page_arch: x86_64,  dart_os: windows, dart_arch: x64,   ext: zip }
+    steps:
+      - name: Download Dart SDK
+        id: download
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://storage.googleapis.com/dart-archive/channels/stable/release/${{ matrix.version }}/sdk"
+          src="dartsdk-${{ matrix.target.dart_os }}-${{ matrix.target.dart_arch }}-release.zip"
+          url="$base/$src"
+          echo "GET $url"
+          http_code=$(curl -sSL -o upstream.zip -w '%{http_code}' "$url")
+          if [ "$http_code" != "200" ]; then
+            echo "::warning::No SDK for ${{ matrix.target.dart_os }}-${{ matrix.target.dart_arch }} at version ${{ matrix.version }} (HTTP $http_code) — skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ls -lh upstream.zip
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Repack with PAGE manifest
+        if: steps.download.outputs.skip != 'true'
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir bundle
+          unzip -q upstream.zip -d bundle
+          cat > bundle/page-bundle-manifest.json <<EOF
+          {
+            "dart_version": "${{ matrix.version }}",
+            "dart_os": "${{ matrix.target.dart_os }}",
+            "dart_arch": "${{ matrix.target.dart_arch }}",
+            "page_os": "${{ matrix.target.page_os }}",
+            "page_arch": "${{ matrix.target.page_arch }}",
+            "upstream_url": "https://storage.googleapis.com/dart-archive/channels/stable/release/${{ matrix.version }}/sdk/dartsdk-${{ matrix.target.dart_os }}-${{ matrix.target.dart_arch }}-release.zip",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "built_by": "github-actions / ${{ github.workflow }} / ${{ github.run_id }}"
+          }
+          EOF
+          outname="page-dart-sdk-${{ matrix.target.page_os }}-${{ matrix.target.page_arch }}-${{ matrix.version }}.${{ matrix.target.ext }}"
+          case "${{ matrix.target.ext }}" in
+            tar.gz)
+              tar -czf "$outname" -C bundle .
+              ;;
+            zip)
+              (cd bundle && zip -qr "../$outname" .)
+              ;;
+            *)
+              echo "::error::Unknown ext ${{ matrix.target.ext }}"
+              exit 1
+              ;;
+          esac
+          ls -lh "$outname"
+          echo "outname=$outname" >> "$GITHUB_OUTPUT"
+
+      - name: Upload as release asset
+        if: steps.download.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: Dart SDK bundles
+          make_latest: false
+          body: |
+            Prebuilt Dart SDK bundles, auto-fetched by [PAGE IDE](https://github.com/monkshark/page-ide)'s `DartSdkInstaller`.
+
+            Assets are added to this tag as new Dart stable releases are built.
+            Each asset wraps the upstream `dartsdk-*-release.zip` payload with a
+            `page-bundle-manifest.json` and is repacked as `tar.gz` on Unix-like
+            OS or `zip` on Windows per the asset naming convention.
+
+            Bundled `dart-language-server` lives inside the SDK at
+            `dart-sdk/bin/dart language-server`. PAGE IDE invokes it through
+            that path.
+
+            See the repository [README](https://github.com/monkshark/page-ide-assets#readme).
+          files: ${{ steps.pack.outputs.outname }}
+          fail_on_unmatched_files: true
