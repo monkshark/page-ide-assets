@@ -8,6 +8,9 @@ download automatically.
 fetched by PAGE IDE's installer code at runtime. Use PAGE IDE itself — the
 in-app LSP install flow handles everything.
 
+Browse the current asset catalog at
+**[monkshark.github.io/page-ide-assets](https://monkshark.github.io/page-ide-assets/)**.
+
 ## What's here
 
 | Asset family | Tag                | Content                                                                  |
@@ -94,6 +97,10 @@ PAGE IDE 의 내장 인스톨러가 런타임에 자동으로 받아가는 LSP·
 **이 저장소는 사용자가 직접 다운로드하는 용도가 아닙니다.** 파일들은 PAGE IDE
 인스톨러 코드가 알아서 가져옵니다. PAGE IDE 의 LSP 설치 흐름을 그대로
 사용하세요.
+
+현재 보관 중인 에셋은
+**[monkshark.github.io/page-ide-assets](https://monkshark.github.io/page-ide-assets/)**
+에서 한눈에 확인할 수 있습니다.
 
 ## 보관 항목
 
