@@ -13,11 +13,13 @@ Browse the current asset catalog at
 
 ## What's here
 
-| Asset family | Tag                | Content                                                                  |
-|--------------|--------------------|--------------------------------------------------------------------------|
-| Ruby         | `ruby-bundle`      | RubyInstaller-devkit + MSYS2 UCRT64 + solargraph + rbs (per Ruby version) |
-| Go           | `gopls-bundle`     | Go SDK + prebuilt gopls (planned)                                        |
-| Java         | `jdtls-bundle`     | Eclipse JDT Language Server tar (planned)                                |
+| Asset family | Tag                  | Content                                                                  |
+|--------------|----------------------|--------------------------------------------------------------------------|
+| Ruby         | `ruby-bundle`        | RubyInstaller-devkit + MSYS2 UCRT64 + solargraph + rbs (per Ruby version) |
+| Java         | `jdtls-bundle`       | Eclipse JDT Language Server milestones (noarch JAR)                       |
+| Dart         | `dart-sdk-bundle`    | Dart SDK stable releases (per OS / arch / version)                        |
+| Flutter      | `flutter-sdk-bundle` | Flutter SDK stable releases (per OS / arch / version)                     |
+| Go           | `gopls-bundle`       | Go SDK + prebuilt gopls (planned)                                        |
 
 ### Naming convention
 
@@ -28,20 +30,27 @@ deterministic:
 page-{language}-{tool}-{os}-{arch}-{version}.{ext}
 ```
 
-- `language` — upstream language id (`ruby`, `go`, `java`, …)
-- `tool` — the bundled LSP / toolchain (`solargraph`, `gopls`, `jdtls`, …)
-- `os` — `windows`, `macos`, `linux`
-- `arch` — `x86_64`, `aarch64`
+- `language` — upstream language id (`ruby`, `go`, `java`, `dart`, `flutter`, …)
+- `tool` — the bundled LSP / toolchain (`solargraph`, `gopls`, `jdtls`, `sdk`, …)
+- `os` — `windows`, `macos`, `linux`, or `noarch`
+- `arch` — `x86_64`, `aarch64`, or `noarch`
 - `version` — upstream tool / runtime version
-- `ext` — `zip` (Windows) or `tar.gz` (Unix-like)
+- `ext` — `zip` (Windows) or `tar.gz` (Unix-like / noarch)
+
+The `noarch` value covers bundles whose payload is platform-independent
+(currently only JDT-LS, which ships as JAR + launcher scripts that run
+unmodified on every supported OS). PAGE IDE's installer falls back to a
+`noarch` slot when no OS/arch-specific bundle is published.
 
 Each release tag groups assets per OS / architecture / upstream version, e.g.:
 
 ```
-ruby-bundle  / page-ruby-solargraph-windows-x86_64-3.4.6.zip
-ruby-bundle  / page-ruby-solargraph-windows-x86_64-3.5.0.zip
-gopls-bundle / page-go-gopls-windows-x86_64-0.16.0.zip
-jdtls-bundle / page-java-jdtls-linux-x86_64-1.59.0.tar.gz
+ruby-bundle        / page-ruby-solargraph-windows-x86_64-3.4.6.zip
+ruby-bundle        / page-ruby-solargraph-windows-x86_64-3.5.0.zip
+jdtls-bundle       / page-java-jdtls-noarch-noarch-1.58.0.tar.gz
+dart-sdk-bundle    / page-dart-sdk-linux-x86_64-3.5.0.tar.gz
+dart-sdk-bundle    / page-dart-sdk-macos-aarch64-3.5.0.tar.gz
+flutter-sdk-bundle / page-flutter-sdk-windows-x86_64-3.24.0.zip
 ```
 
 ## Upstream licenses
@@ -104,11 +113,13 @@ PAGE IDE 의 내장 인스톨러가 런타임에 자동으로 받아가는 LSP·
 
 ## 보관 항목
 
-| 에셋 종류 | 태그            | 내용                                                                |
-|-----------|-----------------|---------------------------------------------------------------------|
-| Ruby      | `ruby-bundle`   | RubyInstaller-devkit + MSYS2 UCRT64 + solargraph + rbs (Ruby 버전별) |
-| Go        | `gopls-bundle`  | Go SDK + 프리빌트 gopls (예정)                                       |
-| Java      | `jdtls-bundle`  | Eclipse JDT Language Server tar (예정)                              |
+| 에셋 종류 | 태그                 | 내용                                                                |
+|-----------|----------------------|---------------------------------------------------------------------|
+| Ruby      | `ruby-bundle`        | RubyInstaller-devkit + MSYS2 UCRT64 + solargraph + rbs (Ruby 버전별) |
+| Java      | `jdtls-bundle`       | Eclipse JDT Language Server 마일스톤 (noarch JAR)                    |
+| Dart      | `dart-sdk-bundle`    | Dart SDK stable 릴리스 (OS / arch / 버전별)                          |
+| Flutter   | `flutter-sdk-bundle` | Flutter SDK stable 릴리스 (OS / arch / 버전별)                       |
+| Go        | `gopls-bundle`       | Go SDK + 프리빌트 gopls (예정)                                       |
 
 ### 네이밍 규칙
 
@@ -118,12 +129,19 @@ PAGE IDE 의 내장 인스톨러가 런타임에 자동으로 받아가는 LSP·
 page-{language}-{tool}-{os}-{arch}-{version}.{ext}
 ```
 
+`os` / `arch` 자리는 일반적으로 `windows` / `macos` / `linux` × `x86_64` /
+`aarch64` 조합입니다. 페이로드 자체가 플랫폼 독립인 번들 (현재 JDT-LS) 은
+두 자리 모두 `noarch` 입니다 — PAGE IDE 인스톨러가 OS/arch 일치 번들을 못
+찾으면 `noarch` 자리로 폴백합니다.
+
 예시:
 
 ```
-ruby-bundle  / page-ruby-solargraph-windows-x86_64-3.4.6.zip
-gopls-bundle / page-go-gopls-windows-x86_64-0.16.0.zip
-jdtls-bundle / page-java-jdtls-linux-x86_64-1.59.0.tar.gz
+ruby-bundle        / page-ruby-solargraph-windows-x86_64-3.4.6.zip
+jdtls-bundle       / page-java-jdtls-noarch-noarch-1.58.0.tar.gz
+dart-sdk-bundle    / page-dart-sdk-linux-x86_64-3.5.0.tar.gz
+dart-sdk-bundle    / page-dart-sdk-macos-aarch64-3.5.0.tar.gz
+flutter-sdk-bundle / page-flutter-sdk-windows-x86_64-3.24.0.zip
 ```
 
 각 릴리즈 태그는 OS / 아키텍처 / 업스트림 버전별로 묶입니다.
