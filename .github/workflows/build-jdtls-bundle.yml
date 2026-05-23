@@ -28,8 +28,8 @@ jobs:
           set -euo pipefail
           html=$(curl -sSfL 'https://download.eclipse.org/jdtls/milestones/?d')
           all=$(echo "$html" \
-            | grep -oE 'href="[0-9]+\.[0-9]+\.[0-9]+/?"' \
-            | sed -E 's|href="([^"/]+)/?"|\1|' \
+            | grep -oE '/jdtls/milestones/[0-9]+\.[0-9]+\.[0-9]+' \
+            | sed -E 's|/jdtls/milestones/||' \
             | sort -u)
           min='${{ inputs.min_version }}'
           filtered=$(echo "$all" | awk -v min="$min" '

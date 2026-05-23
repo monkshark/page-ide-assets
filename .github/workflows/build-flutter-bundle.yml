@@ -38,7 +38,7 @@ jobs:
                 | [$av, $bv]
                 | (.[0] | length) as $an
                 | (.[1] | length) as $bn
-                | ($an < $bn ? $an : $bn) as $lim
+                | (if $an < $bn then $an else $bn end) as $lim
                 | reduce range(0; $lim) as $i (0;
                     if . != 0 then . else ($av[$i] - $bv[$i]) end);
               .releases
