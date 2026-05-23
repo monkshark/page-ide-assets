@@ -72,7 +72,7 @@ jobs:
             echo "::error::No Flutter targets matched min=$min"
             exit 1
           fi
-          echo "$targets" | jq -r '.[] | "\(.version) \(.page_os) \(.page_arch)"' | head -n 10
+          echo "$targets" | jq -r '.[0:10][] | "\(.version) \(.page_os) \(.page_arch)"'
           echo "Total targets: $count"
           echo "targets=$targets" >> "$GITHUB_OUTPUT"
 
