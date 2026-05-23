@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PAGE IDE — Asset bundles</title>
+<link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>📦</text></svg>">
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel-2: #1c232c;
+    --border: #232b35;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --accent: #6ea8fe;
+    --accent-2: #2ea043;
+    --warn: #d29922;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif; }
+  body { line-height: 1.55; }
+  header { padding: 32px 24px 16px; border-bottom: 1px solid var(--border); }
+  header h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
+  header p { margin: 0; color: var(--muted); font-size: 14px; }
+  header a { color: var(--accent); text-decoration: none; }
+  header a:hover { text-decoration: underline; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 24px; flex-wrap: wrap; }
+  .controls input, .controls select {
+    background: var(--panel); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 12px; font-size: 14px; font-family: inherit;
+  }
+  .controls input { min-width: 220px; }
+  .controls .count { color: var(--muted); font-size: 13px; margin-left: auto; }
+  .release { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; }
+  .release-head { padding: 14px 18px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .release-head .tag { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; font-weight: 600; }
+  .release-head .badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+  .badge-stable { background: rgba(46, 160, 67, 0.18); color: #56d364; }
+  .badge-pre { background: rgba(210, 153, 34, 0.18); color: var(--warn); }
+  .badge-draft { background: rgba(139, 148, 158, 0.18); color: var(--muted); }
+  .release-head .when { color: var(--muted); font-size: 12px; }
+  .release-body { padding: 0 18px 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 10px; text-align: left; border-top: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  td.name { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
+  td.meta { color: var(--muted); white-space: nowrap; }
+  td a.dl { color: var(--accent); text-decoration: none; }
+  td a.dl:hover { text-decoration: underline; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 4px; background: var(--panel-2); color: var(--muted); font-size: 11px; margin-right: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .empty { color: var(--muted); padding: 24px; text-align: center; }
+  .err { background: rgba(248, 81, 73, 0.12); border: 1px solid rgba(248, 81, 73, 0.4); color: #ff7b72; padding: 12px 16px; border-radius: 6px; }
+  footer { padding: 32px 24px; color: var(--muted); font-size: 12px; text-align: center; border-top: 1px solid var(--border); margin-top: 32px; }
+  footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>PAGE IDE — Asset bundles</h1>
+  <p>
+    Prebuilt LSP / toolchain bundles consumed by
+    <a href="https://github.com/monkshark/page-ide">PAGE IDE</a>'s in-app installer.
+    These files are not intended for manual download — the IDE fetches them automatically.
+  </p>
+</header>
+<main>
+  <div class="controls">
+    <input id="q" type="search" placeholder="Filter by language / tool / OS / version…" autocomplete="off" />
+    <select id="tag-filter"><option value="">All bundle tags</option></select>
+    <span class="count" id="count"></span>
+  </div>
+  <div id="status"></div>
+  <div id="releases"></div>
+</main>
+<footer>
+  Generated from
+  <a href="https://api.github.com/repos/monkshark/page-ide-assets/releases">GitHub Releases API</a> ·
+  <a href="https://github.com/monkshark/page-ide-assets">Source repo</a>
+</footer>
+<script>
+  const REPO = "monkshark/page-ide-assets";
+  const API = `https://api.github.com/repos/${REPO}/releases?per_page=100`;
+
+  const els = {
+    status: document.getElementById("status"),
+    releases: document.getElementById("releases"),
+    q: document.getElementById("q"),
+    tagFilter: document.getElementById("tag-filter"),
+    count: document.getElementById("count"),
+  };
+
+  let allReleases = [];
+
+  function fmtBytes(n) {
+    if (!Number.isFinite(n)) return "";
+    const units = ["B", "KB", "MB", "GB"];
+    let i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+  }
+
+  function fmtDate(s) {
+    if (!s) return "";
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return "";
+    return d.toISOString().slice(0, 10);
+  }
+
+  function parseAssetName(name) {
+    const m = /^page-([a-z0-9]+)-([a-z0-9]+)-([a-z0-9]+)-([a-z0-9_]+)-(.+?)\.(zip|tar\.gz|tar\.xz|tgz)$/i.exec(name);
+    if (!m) return null;
+    return { language: m[1], tool: m[2], os: m[3], arch: m[4], version: m[5], ext: m[6] };
+  }
+
+  function badgeFor(rel) {
+    if (rel.draft) return `<span class="badge badge-draft">draft</span>`;
+    if (rel.prerelease) return `<span class="badge badge-pre">prerelease</span>`;
+    return `<span class="badge badge-stable">stable</span>`;
+  }
+
+  function renderRelease(rel) {
+    const assets = rel.assets || [];
+    const rows = assets.map(a => {
+      const parsed = parseAssetName(a.name);
+      const pills = parsed
+        ? `<span class="pill">${parsed.language}</span><span class="pill">${parsed.tool}</span><span class="pill">${parsed.os}/${parsed.arch}</span><span class="pill">${parsed.version}</span>`
+        : "";
+      return `
+        <tr data-name="${a.name.toLowerCase()}">
+          <td class="name">${a.name}<div style="margin-top:4px">${pills}</div></td>
+          <td class="meta">${fmtBytes(a.size)}</td>
+          <td class="meta">${a.download_count.toLocaleString()} dl</td>
+          <td><a class="dl" href="${a.browser_download_url}">Download ↗</a></td>
+        </tr>
+      `;
+    }).join("");
+
+    const table = assets.length
+      ? `<table>
+           <thead><tr><th>Asset</th><th>Size</th><th>Downloads</th><th></th></tr></thead>
+           <tbody>${rows}</tbody>
+         </table>`
+      : `<div class="empty">No assets uploaded yet.</div>`;
+
+    return `
+      <section class="release" data-tag="${rel.tag_name}">
+        <div class="release-head">
+          <span class="tag">${rel.tag_name}</span>
+          ${badgeFor(rel)}
+          <span class="when">${fmtDate(rel.published_at) || "unpublished"}</span>
+        </div>
+        <div class="release-body">${table}</div>
+      </section>
+    `;
+  }
+
+  function populateTagFilter() {
+    const tags = [...new Set(allReleases.map(r => r.tag_name))].sort();
+    for (const t of tags) {
+      const opt = document.createElement("option");
+      opt.value = t; opt.textContent = t;
+      els.tagFilter.appendChild(opt);
+    }
+  }
+
+  function applyFilters() {
+    const q = els.q.value.trim().toLowerCase();
+    const tag = els.tagFilter.value;
+    let shownReleases = 0;
+    let shownAssets = 0;
+    document.querySelectorAll(".release").forEach(sec => {
+      const matchTag = !tag || sec.dataset.tag === tag;
+      let visibleRows = 0;
+      sec.querySelectorAll("tbody tr").forEach(tr => {
+        const hit = !q || tr.dataset.name.includes(q);
+        tr.style.display = hit ? "" : "none";
+        if (hit) visibleRows++;
+      });
+      const show = matchTag && (q ? visibleRows > 0 : true);
+      sec.style.display = show ? "" : "none";
+      if (show) { shownReleases++; shownAssets += visibleRows; }
+    });
+    els.count.textContent = `${shownReleases} release(s), ${shownAssets} asset(s)`;
+  }
+
+  async function load() {
+    els.status.innerHTML = `<div class="empty">Loading releases…</div>`;
+    try {
+      const r = await fetch(API, { headers: { Accept: "application/vnd.github+json" } });
+      if (!r.ok) throw new Error(`GitHub API HTTP ${r.status}`);
+      allReleases = await r.json();
+      els.status.innerHTML = "";
+      if (allReleases.length === 0) {
+        els.releases.innerHTML = `<div class="empty">No releases yet.</div>`;
+        return;
+      }
+      els.releases.innerHTML = allReleases.map(renderRelease).join("");
+      populateTagFilter();
+      applyFilters();
+    } catch (e) {
+      els.status.innerHTML = `<div class="err">Failed to load releases: ${e.message}</div>`;
+    }
+  }
+
+  els.q.addEventListener("input", applyFilters);
+  els.tagFilter.addEventListener("change", applyFilters);
+  load();
+</script>
+</body>
+</html>
