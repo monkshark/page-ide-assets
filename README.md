@@ -16,12 +16,29 @@ in-app LSP install flow handles everything.
 | Go           | `gopls-bundle`     | Go SDK + prebuilt gopls (planned)                                        |
 | Java         | `jdtls-bundle`     | Eclipse JDT Language Server tar (planned)                                |
 
+### Naming convention
+
+All bundle filenames follow a single rule so installer / CI parsing stays
+deterministic:
+
+```
+page-{language}-{tool}-{os}-{arch}-{version}.{ext}
+```
+
+- `language` — upstream language id (`ruby`, `go`, `java`, …)
+- `tool` — the bundled LSP / toolchain (`solargraph`, `gopls`, `jdtls`, …)
+- `os` — `windows`, `macos`, `linux`
+- `arch` — `x86_64`, `aarch64`
+- `version` — upstream tool / runtime version
+- `ext` — `zip` (Windows) or `tar.gz` (Unix-like)
+
 Each release tag groups assets per OS / architecture / upstream version, e.g.:
 
 ```
-ruby-bundle / page-ruby-solargraph-windows-x86_64-3.4.6.zip
-ruby-bundle / page-ruby-solargraph-windows-x86_64-3.5.0.zip
-gopls-bundle / page-gopls-windows-x86_64-0.16.0.zip
+ruby-bundle  / page-ruby-solargraph-windows-x86_64-3.4.6.zip
+ruby-bundle  / page-ruby-solargraph-windows-x86_64-3.5.0.zip
+gopls-bundle / page-go-gopls-windows-x86_64-0.16.0.zip
+jdtls-bundle / page-java-jdtls-linux-x86_64-1.59.0.tar.gz
 ```
 
 ## Upstream licenses
@@ -85,6 +102,22 @@ PAGE IDE 의 내장 인스톨러가 런타임에 자동으로 받아가는 LSP·
 | Ruby      | `ruby-bundle`   | RubyInstaller-devkit + MSYS2 UCRT64 + solargraph + rbs (Ruby 버전별) |
 | Go        | `gopls-bundle`  | Go SDK + 프리빌트 gopls (예정)                                       |
 | Java      | `jdtls-bundle`  | Eclipse JDT Language Server tar (예정)                              |
+
+### 네이밍 규칙
+
+번들 파일명은 단일 규칙을 따라 인스톨러·CI 파싱이 일관됩니다:
+
+```
+page-{language}-{tool}-{os}-{arch}-{version}.{ext}
+```
+
+예시:
+
+```
+ruby-bundle  / page-ruby-solargraph-windows-x86_64-3.4.6.zip
+gopls-bundle / page-go-gopls-windows-x86_64-0.16.0.zip
+jdtls-bundle / page-java-jdtls-linux-x86_64-1.59.0.tar.gz
+```
 
 각 릴리즈 태그는 OS / 아키텍처 / 업스트림 버전별로 묶입니다.
 
