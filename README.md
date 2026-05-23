@@ -17,6 +17,7 @@ Browse the current asset catalog at
 |--------------|----------------------|--------------------------------------------------------------------------|
 | Ruby         | `ruby-bundle`        | RubyInstaller-devkit + MSYS2 UCRT64 + solargraph + rbs (per Ruby version) |
 | Java         | `jdtls-bundle`       | Eclipse JDT Language Server milestones (noarch JAR)                       |
+| Java (JDK)   | `jdk-bundle`         | Eclipse Temurin LTS JDK builds (per OS / arch / version)                  |
 | Dart         | `dart-sdk-bundle`    | Dart SDK stable releases (per OS / arch / version)                        |
 | Flutter      | `flutter-sdk-bundle` | Flutter SDK stable releases (per OS / arch / version)                     |
 | Go           | `gopls-bundle`       | Go SDK + prebuilt gopls (planned)                                        |
@@ -48,6 +49,8 @@ Each release tag groups assets per OS / architecture / upstream version, e.g.:
 ruby-bundle        / page-ruby-solargraph-windows-x86_64-3.4.6.zip
 ruby-bundle        / page-ruby-solargraph-windows-x86_64-3.5.0.zip
 jdtls-bundle       / page-java-jdtls-noarch-noarch-1.58.0.tar.gz
+jdk-bundle         / page-java-temurin-linux-x86_64-21.0.5+11.tar.gz
+jdk-bundle         / page-java-temurin-windows-x86_64-17.0.13+11.zip
 dart-sdk-bundle    / page-dart-sdk-linux-x86_64-3.5.0.tar.gz
 dart-sdk-bundle    / page-dart-sdk-macos-aarch64-3.5.0.tar.gz
 flutter-sdk-bundle / page-flutter-sdk-windows-x86_64-3.24.0.zip
@@ -117,6 +120,7 @@ PAGE IDE 의 내장 인스톨러가 런타임에 자동으로 받아가는 LSP·
 |-----------|----------------------|---------------------------------------------------------------------|
 | Ruby      | `ruby-bundle`        | RubyInstaller-devkit + MSYS2 UCRT64 + solargraph + rbs (Ruby 버전별) |
 | Java      | `jdtls-bundle`       | Eclipse JDT Language Server 마일스톤 (noarch JAR)                    |
+| Java(JDK) | `jdk-bundle`         | Eclipse Temurin LTS JDK 빌드 (OS / arch / 버전별)                    |
 | Dart      | `dart-sdk-bundle`    | Dart SDK stable 릴리스 (OS / arch / 버전별)                          |
 | Flutter   | `flutter-sdk-bundle` | Flutter SDK stable 릴리스 (OS / arch / 버전별)                       |
 | Go        | `gopls-bundle`       | Go SDK + 프리빌트 gopls (예정)                                       |

@@ -1,0 +1,174 @@
+name: Build Temurin JDK bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      majors:
+        description: 'Comma-separated LTS majors to build (default 8,11,17,21).'
+        default: '8,11,17,21'
+        required: true
+      release_tag:
+        description: 'GitHub release tag (groups JDK bundles).'
+        default: 'jdk-bundle'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  enumerate:
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.list.outputs.versions }}
+    steps:
+      - name: Resolve latest GA patch per major
+        id: list
+        shell: bash
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra majors <<< "${{ inputs.majors }}"
+          out='[]'
+          for m in "${majors[@]}"; do
+            m=$(echo "$m" | tr -d ' ')
+            [ -z "$m" ] && continue
+            next=$((m + 1))
+            url="https://api.adoptium.net/v3/info/release_versions?release_type=ga&page_size=1&heap_size=normal&image_type=jdk&jvm_impl=hotspot&vendor=eclipse&version=%5B${m}%2C${next}%29&sort_order=DESC"
+            echo "GET $url"
+            resp=$(curl -sSfL "$url")
+            ver=$(echo "$resp" | jq -r '.versions[0].openjdk_version // empty')
+            if [ -z "$ver" ]; then
+              echo "::warning::No GA patch found for major $m — skipping"
+              continue
+            fi
+            echo "  major=$m latest_ga=$ver"
+            out=$(echo "$out" | jq --arg m "$m" --arg v "$ver" '. + [{major: ($m|tonumber), version: $v}]')
+          done
+          if [ "$(echo "$out" | jq 'length')" = "0" ]; then
+            echo "::error::No versions resolved"
+            exit 1
+          fi
+          compact=$(echo "$out" | jq -c .)
+          echo "versions=$compact" >> "$GITHUB_OUTPUT"
+          echo "Resolved: $compact"
+
+  build:
+    needs: enumerate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        entry: ${{ fromJSON(needs.enumerate.outputs.versions) }}
+        target:
+          - { page_os: linux,   page_arch: x86_64,  adoptium_os: linux,   adoptium_arch: x64,    ext: tar.gz }
+          - { page_os: linux,   page_arch: aarch64, adoptium_os: linux,   adoptium_arch: aarch64, ext: tar.gz }
+          - { page_os: macos,   page_arch: x86_64,  adoptium_os: mac,     adoptium_arch: x64,    ext: tar.gz }
+          - { page_os: macos,   page_arch: aarch64, adoptium_os: mac,     adoptium_arch: aarch64, ext: tar.gz }
+          - { page_os: windows, page_arch: x86_64,  adoptium_os: windows, adoptium_arch: x64,    ext: zip }
+    steps:
+      - name: Download Temurin binary
+        id: download
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver='${{ matrix.entry.version }}'
+          enc=$(jq -rn --arg v "jdk-$ver" '$v|@uri')
+          url="https://api.adoptium.net/v3/binary/version/${enc}/${{ matrix.target.adoptium_os }}/${{ matrix.target.adoptium_arch }}/jdk/hotspot/normal/eclipse?project=jdk"
+          echo "GET $url"
+          http_code=$(curl -sSL --max-time 600 -o upstream.archive -w '%{http_code}' "$url")
+          if [ "$http_code" != "200" ]; then
+            echo "::warning::No JDK for ${{ matrix.target.adoptium_os }}-${{ matrix.target.adoptium_arch }} at $ver (HTTP $http_code) — skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          size=$(stat -c%s upstream.archive)
+          if [ "$size" -lt 10000000 ]; then
+            echo "::warning::Downloaded archive only $size bytes — likely error payload, skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ls -lh upstream.archive
+          sha256sum upstream.archive > upstream.sha256
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Repack with PAGE manifest
+        if: steps.download.outputs.skip != 'true'
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir bundle
+          case "${{ matrix.target.ext }}" in
+            tar.gz)
+              tar -xzf upstream.archive -C bundle --strip-components=1
+              ;;
+            zip)
+              tmp=$(mktemp -d)
+              unzip -q upstream.archive -d "$tmp"
+              inner=$(ls "$tmp" | head -1)
+              if [ -z "$inner" ]; then
+                echo "::error::Empty archive"
+                exit 1
+              fi
+              cp -R "$tmp/$inner/." bundle/
+              rm -rf "$tmp"
+              ;;
+            *)
+              echo "::error::Unknown ext ${{ matrix.target.ext }}"
+              exit 1
+              ;;
+          esac
+          if [ ! -d bundle/bin ]; then
+            echo "::error::Unpacked archive missing bin/ — layout unexpected"
+            ls -la bundle | head -20
+            exit 1
+          fi
+          cat > bundle/page-bundle-manifest.json <<EOF
+          {
+            "jdk_version": "${{ matrix.entry.version }}",
+            "jdk_major": ${{ matrix.entry.major }},
+            "jdk_vendor": "temurin",
+            "adoptium_os": "${{ matrix.target.adoptium_os }}",
+            "adoptium_arch": "${{ matrix.target.adoptium_arch }}",
+            "page_os": "${{ matrix.target.page_os }}",
+            "page_arch": "${{ matrix.target.page_arch }}",
+            "upstream_sha256": "$(cut -d' ' -f1 upstream.sha256)",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "built_by": "github-actions / ${{ github.workflow }} / ${{ github.run_id }}"
+          }
+          EOF
+          safe_ver=$(echo '${{ matrix.entry.version }}' | tr '+' '-')
+          outname="page-java-temurin-${{ matrix.target.page_os }}-${{ matrix.target.page_arch }}-${safe_ver}.${{ matrix.target.ext }}"
+          case "${{ matrix.target.ext }}" in
+            tar.gz)
+              tar -czf "$outname" -C bundle .
+              ;;
+            zip)
+              (cd bundle && zip -qr "../$outname" .)
+              ;;
+          esac
+          ls -lh "$outname"
+          echo "outname=$outname" >> "$GITHUB_OUTPUT"
+
+      - name: Upload as release asset
+        if: steps.download.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: Temurin JDK bundles
+          make_latest: false
+          body: |
+            Prebuilt Eclipse Temurin (Adoptium) JDK bundles, auto-fetched by [PAGE IDE](https://github.com/monkshark/page-ide)'s `JdkInstaller`.
+
+            Assets are added to this tag as new Temurin GA releases are built.
+            Each asset wraps the upstream Temurin archive payload with a
+            `page-bundle-manifest.json` and is repacked as `tar.gz` on Unix-like
+            OS or `zip` on Windows per the asset naming convention.
+
+            Matrix: LTS majors (`8`, `11`, `17`, `21`) × `linux/macos/windows` × `x86_64/aarch64`.
+            Some OS×arch combinations may be skipped when Adoptium does not publish that pairing
+            (notably JDK 8 ARM64 macOS/Windows).
+
+            See the repository [README](https://github.com/monkshark/page-ide-assets#readme).
+          files: ${{ steps.pack.outputs.outname }}
+          fail_on_unmatched_files: true
