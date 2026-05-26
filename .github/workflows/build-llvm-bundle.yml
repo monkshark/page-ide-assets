@@ -1,0 +1,125 @@
+name: Build LLVM/Clang portable bundle
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+    inputs:
+      llvm_version:
+        description: 'LLVM version (default: latest)'
+        default: 'latest'
+        required: true
+      release_tag:
+        description: 'GitHub release tag'
+        default: 'llvm-bundle'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Resolve LLVM version
+        id: ver
+        shell: bash
+        run: |
+          requested="${{ inputs.llvm_version || 'latest' }}"
+          if [ "$requested" = "latest" ]; then
+            ver=$(curl -sSfL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/llvm/llvm-project/releases/latest" | jq -r '.tag_name // empty' | sed 's/^llvmorg-//')
+          else
+            ver="$requested"
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "Resolved LLVM version: $ver"
+
+  build:
+    needs: resolve
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { page_os: linux,   page_arch: x86_64,  llvm_suffix: x86_64-linux-gnu-ubuntu-22.04, ext: tar.xz }
+          - { page_os: linux,   page_arch: aarch64, llvm_suffix: aarch64-linux-gnu,              ext: tar.xz }
+          - { page_os: macos,   page_arch: x86_64,  llvm_suffix: x86_64-apple-darwin,            ext: tar.xz }
+          - { page_os: macos,   page_arch: aarch64, llvm_suffix: arm64-apple-darwin24.2.0,       ext: tar.xz }
+          - { page_os: windows, page_arch: x86_64,  llvm_suffix: x86_64-pc-windows-msvc,         ext: tar.xz }
+    steps:
+      - name: Download LLVM release
+        id: download
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${{ needs.resolve.outputs.version }}"
+          tag="llvmorg-${ver}"
+          suffix="${{ matrix.target.llvm_suffix }}"
+          ext="${{ matrix.target.ext }}"
+
+          assets_json=$(curl -sSfL \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/llvm/llvm-project/releases/tags/$tag")
+
+          pattern="LLVM-${ver}-${suffix}\\.${ext//./\\.}"
+          alt_pattern="clang\\+llvm-${ver}-${suffix}[^\"]*\\.${ext//./\\.}"
+
+          url=$(echo "$assets_json" | jq -r --arg p "$pattern" --arg ap "$alt_pattern" \
+            '[ .assets[].browser_download_url | select(test($p) or test($ap)) ] | first // empty')
+
+          if [ -z "$url" ]; then
+            echo "::warning::No LLVM asset for $suffix — skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "GET $url"
+          curl -sSfL --max-time 600 -o upstream.archive "$url"
+          ls -lh upstream.archive
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Repack as PAGE bundle
+        if: steps.download.outputs.skip != 'true'
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${{ needs.resolve.outputs.version }}"
+          mkdir bundle
+          tar -xf upstream.archive -C bundle --strip-components=1
+
+          if [ ! -f bundle/bin/clang ] && [ ! -f bundle/bin/clang.exe ]; then
+            echo "::error::clang binary not found after extraction"
+            ls bundle/bin/ | head -20
+            exit 1
+          fi
+
+          cat > bundle/page-bundle-manifest.json <<EOF
+          {
+            "llvm_version": "$ver",
+            "page_os": "${{ matrix.target.page_os }}",
+            "page_arch": "${{ matrix.target.page_arch }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+
+          outname="page-cpp-llvm-${{ matrix.target.page_os }}-${{ matrix.target.page_arch }}-${ver}.tar.gz"
+          tar -czf "$outname" -C bundle .
+          ls -lh "$outname"
+          echo "outname=$outname" >> "$GITHUB_OUTPUT"
+
+      - name: Upload as release asset
+        if: steps.download.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || 'llvm-bundle' }}
+          name: LLVM/Clang portable bundles
+          make_latest: false
+          body: |
+            Portable LLVM/Clang toolchain for PAGE IDE.
+            Includes clang, clang++, clangd, lld, lldb.
+          files: ${{ steps.pack.outputs.outname }}
+          fail_on_unmatched_files: true
