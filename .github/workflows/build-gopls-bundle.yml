@@ -1,0 +1,95 @@
+name: Build prebuilt gopls bundle
+
+on:
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+    inputs:
+      gopls_version:
+        description: 'gopls version (default: latest)'
+        default: 'latest'
+        required: true
+      release_tag:
+        description: 'GitHub release tag'
+        default: 'gopls-bundle'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { goos: linux,   goarch: amd64,   page_os: linux,   page_arch: x86_64  }
+          - { goos: linux,   goarch: arm64,   page_os: linux,   page_arch: aarch64 }
+          - { goos: darwin,  goarch: amd64,   page_os: macos,   page_arch: x86_64  }
+          - { goos: darwin,  goarch: arm64,   page_os: macos,   page_arch: aarch64 }
+          - { goos: windows, goarch: amd64,   page_os: windows, page_arch: x86_64  }
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Resolve gopls version
+        id: version
+        shell: bash
+        run: |
+          requested="${{ inputs.gopls_version || 'latest' }}"
+          if [ "$requested" = "latest" ]; then
+            ver=$(go list -m -json golang.org/x/tools/gopls@latest 2>/dev/null | jq -r '.Version // empty' || true)
+            if [ -z "$ver" ]; then
+              ver=$(curl -sSfL "https://proxy.golang.org/golang.org/x/tools/gopls/@latest" | jq -r '.Version // empty')
+            fi
+          else
+            ver="$requested"
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "Resolved gopls version: $ver"
+
+      - name: Build gopls
+        shell: bash
+        env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          ver="${{ steps.version.outputs.version }}"
+          echo "Building gopls $ver for $GOOS/$GOARCH"
+          go install "golang.org/x/tools/gopls@$ver"
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          src="$(go env GOPATH)/bin/${GOOS}_${GOARCH}/gopls${ext}"
+          if [ ! -f "$src" ]; then
+            src="$(go env GOPATH)/bin/gopls${ext}"
+          fi
+          ls -lh "$src"
+          mkdir bundle
+          cp "$src" "bundle/gopls${ext}"
+          cat > bundle/page-bundle-manifest.json <<EOF
+          {
+            "gopls_version": "$ver",
+            "page_os": "${{ matrix.target.page_os }}",
+            "page_arch": "${{ matrix.target.page_arch }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          outname="page-go-gopls-${{ matrix.target.page_os }}-${{ matrix.target.page_arch }}-${ver}.tar.gz"
+          tar -czf "$outname" -C bundle .
+          ls -lh "$outname"
+          echo "outname=$outname" >> "$GITHUB_ENV"
+
+      - name: Upload as release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || 'gopls-bundle' }}
+          name: Prebuilt gopls bundles
+          make_latest: false
+          body: |
+            Prebuilt gopls binaries for PAGE IDE.
+          files: ${{ env.outname }}
+          fail_on_unmatched_files: true
