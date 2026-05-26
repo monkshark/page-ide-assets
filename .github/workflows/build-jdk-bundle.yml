@@ -32,16 +32,20 @@ jobs:
             m=$(echo "$m" | tr -d ' ')
             [ -z "$m" ] && continue
             next=$((m + 1))
-            url="https://api.adoptium.net/v3/info/release_versions?release_type=ga&page_size=1&heap_size=normal&image_type=jdk&jvm_impl=hotspot&vendor=eclipse&version=%5B${m}%2C${next}%29&sort_order=DESC"
+            url="https://api.adoptium.net/v3/info/release_versions?release_type=ga&page_size=5&heap_size=normal&image_type=jdk&jvm_impl=hotspot&vendor=eclipse&version=%5B${m}%2C${next}%29&sort_order=DESC"
             echo "GET $url"
             resp=$(curl -sSfL "$url")
-            ver=$(echo "$resp" | jq -r '.versions[0].openjdk_version // empty')
-            if [ -z "$ver" ]; then
+            count=$(echo "$resp" | jq '.versions | length')
+            if [ "$count" = "0" ]; then
               echo "::warning::No GA patch found for major $m — skipping"
               continue
             fi
-            echo "  major=$m latest_ga=$ver"
-            out=$(echo "$out" | jq --arg m "$m" --arg v "$ver" '. + [{major: ($m|tonumber), version: $v}]')
+            for i in $(seq 0 $((count - 1))); do
+              ver=$(echo "$resp" | jq -r ".versions[$i].semver // empty" | sed 's/\.0\.LTS//' | sed 's/\.LTS//')
+              [ -z "$ver" ] && continue
+              echo "  major=$m ver=$ver"
+              out=$(echo "$out" | jq --arg m "$m" --arg v "$ver" '. + [{major: ($m|tonumber), version: $v}]')
+            done
           done
           if [ "$(echo "$out" | jq 'length')" = "0" ]; then
             echo "::error::No versions resolved"
@@ -56,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 12
       matrix:
         entry: ${{ fromJSON(needs.enumerate.outputs.versions) }}
         target:
