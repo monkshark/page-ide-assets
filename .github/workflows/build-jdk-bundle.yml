@@ -41,10 +41,11 @@ jobs:
               continue
             fi
             for i in $(seq 0 $((count - 1))); do
-              ver=$(echo "$resp" | jq -r ".versions[$i].semver // empty" | sed 's/\.0\.LTS//' | sed 's/\.LTS//')
-              [ -z "$ver" ] && continue
-              echo "  major=$m ver=$ver"
-              out=$(echo "$out" | jq --arg m "$m" --arg v "$ver" '. + [{major: ($m|tonumber), version: $v}]')
+              semver=$(echo "$resp" | jq -r ".versions[$i].semver // empty" | sed 's/\.0\.LTS//' | sed 's/\.LTS//')
+              openjdk=$(echo "$resp" | jq -r ".versions[$i].openjdk_version // empty")
+              [ -z "$semver" ] || [ -z "$openjdk" ] && continue
+              echo "  major=$m semver=$semver openjdk=$openjdk"
+              out=$(echo "$out" | jq --arg m "$m" --arg v "$semver" --arg o "$openjdk" '. + [{major: ($m|tonumber), version: $v, openjdk_version: $o}]')
             done
           done
           if [ "$(echo "$out" | jq 'length')" = "0" ]; then
@@ -75,7 +76,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ver='${{ matrix.entry.version }}'
+          ver='${{ matrix.entry.openjdk_version }}'
           enc=$(jq -rn --arg v "jdk-$ver" '$v|@uri')
           url="https://api.adoptium.net/v3/binary/version/${enc}/${{ matrix.target.adoptium_os }}/${{ matrix.target.adoptium_arch }}/jdk/hotspot/normal/eclipse?project=jdk"
           echo "GET $url"
@@ -135,6 +136,7 @@ jobs:
           cat > bundle/page-bundle-manifest.json <<EOF
           {
             "jdk_version": "${{ matrix.entry.version }}",
+            "jdk_openjdk_version": "${{ matrix.entry.openjdk_version }}",
             "jdk_major": ${{ matrix.entry.major }},
             "jdk_vendor": "temurin",
             "adoptium_os": "${{ matrix.target.adoptium_os }}",
