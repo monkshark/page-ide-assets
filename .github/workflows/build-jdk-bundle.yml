@@ -1,11 +1,13 @@
 name: Build Temurin JDK bundle
 
 on:
+  schedule:
+    - cron: '0 6 * * 1'
   workflow_dispatch:
     inputs:
       majors:
-        description: 'Comma-separated LTS majors to build (default 8,11,17,21).'
-        default: '8,11,17,21'
+        description: 'Comma-separated LTS majors to build (default 8,11,17,21,25).'
+        default: '8,11,17,21,25'
         required: true
       release_tag:
         description: 'GitHub release tag (groups JDK bundles).'
@@ -26,7 +28,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          IFS=',' read -ra majors <<< "${{ inputs.majors }}"
+          raw="${{ inputs.majors || '8,11,17,21,25' }}"
+          IFS=',' read -ra majors <<< "$raw"
           out='[]'
           for m in "${majors[@]}"; do
             m=$(echo "$m" | tr -d ' ')
@@ -167,7 +170,7 @@ jobs:
         if: steps.download.outputs.skip != 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.release_tag }}
+          tag_name: ${{ inputs.release_tag || 'jdk-bundle' }}
           name: Temurin JDK bundles
           make_latest: false
           body: |
