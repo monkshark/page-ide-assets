@@ -6,9 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       versions:
-        description: 'Comma-separated Python versions (default 3.13.3,3.12.10,3.11.12)'
-        default: '3.13.3,3.12.10,3.11.12'
+        description: 'Comma-separated Python versions'
+        default: '3.14.5,3.13.13,3.12.13,3.11.15,3.10.20'
         required: true
+      pbs_tag:
+        description: 'python-build-standalone release tag (default: latest)'
+        default: 'latest'
+        required: false
       release_tag:
         description: 'GitHub release tag'
         default: 'python-bundle'
@@ -62,10 +66,16 @@ jobs:
           set -euo pipefail
           pattern="cpython-${{ matrix.version }}+.*-${{ matrix.target.pbs_triple }}-install_only_stripped\\.tar\\.gz"
           echo "Looking for asset matching: $pattern"
+          pbs_tag="${{ inputs.pbs_tag || 'latest' }}"
+          if [ "$pbs_tag" = "latest" ]; then
+            api_url="https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest"
+          else
+            api_url="https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/$pbs_tag"
+          fi
           assets_json=$(curl -sSfL \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest")
+            "$api_url")
           url=$(echo "$assets_json" | jq -r --arg p "$pattern" \
             '[.assets[].browser_download_url | select(test($p))] | first // empty')
           if [ -z "$url" ]; then
