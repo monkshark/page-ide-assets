@@ -1,0 +1,114 @@
+name: Build Python portable bundle
+
+on:
+  schedule:
+    - cron: '30 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: 'Comma-separated Python versions (default 3.13.3,3.12.10,3.11.12)'
+        default: '3.13.3,3.12.10,3.11.12'
+        required: true
+      release_tag:
+        description: 'GitHub release tag'
+        default: 'python-bundle'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  enumerate:
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.list.outputs.versions }}
+    steps:
+      - name: Build version matrix
+        id: list
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw="${{ inputs.versions || '3.13.3,3.12.10,3.11.12' }}"
+          IFS=',' read -ra vers <<< "$raw"
+          out='[]'
+          for v in "${vers[@]}"; do
+            v=$(echo "$v" | tr -d ' ')
+            [ -z "$v" ] && continue
+            out=$(echo "$out" | jq --arg v "$v" '. + [$v]')
+          done
+          compact=$(echo "$out" | jq -c .)
+          echo "versions=$compact" >> "$GITHUB_OUTPUT"
+          echo "Versions: $compact"
+
+  build:
+    needs: enumerate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        version: ${{ fromJSON(needs.enumerate.outputs.versions) }}
+        target:
+          - { page_os: linux,   page_arch: x86_64,  pbs_triple: x86_64-unknown-linux-gnu }
+          - { page_os: linux,   page_arch: aarch64, pbs_triple: aarch64-unknown-linux-gnu }
+          - { page_os: macos,   page_arch: x86_64,  pbs_triple: x86_64-apple-darwin }
+          - { page_os: macos,   page_arch: aarch64, pbs_triple: aarch64-apple-darwin }
+          - { page_os: windows, page_arch: x86_64,  pbs_triple: x86_64-pc-windows-msvc }
+    steps:
+      - name: Find and download python-build-standalone asset
+        id: download
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern="cpython-${{ matrix.version }}+.*-${{ matrix.target.pbs_triple }}-install_only_stripped\\.tar\\.gz"
+          echo "Looking for asset matching: $pattern"
+          assets_json=$(curl -sSfL \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest")
+          url=$(echo "$assets_json" | jq -r --arg p "$pattern" \
+            '[.assets[].browser_download_url | select(test($p))] | first // empty')
+          if [ -z "$url" ]; then
+            echo "::warning::No asset for ${{ matrix.version }} ${{ matrix.target.pbs_triple }} — skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "GET $url"
+          curl -sSfL --max-time 300 -o upstream.tar.gz "$url"
+          ls -lh upstream.tar.gz
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Repack as PAGE bundle
+        if: steps.download.outputs.skip != 'true'
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir bundle
+          tar -xzf upstream.tar.gz -C bundle --strip-components=1
+          cat > bundle/page-bundle-manifest.json <<EOF
+          {
+            "python_version": "${{ matrix.version }}",
+            "pbs_triple": "${{ matrix.target.pbs_triple }}",
+            "page_os": "${{ matrix.target.page_os }}",
+            "page_arch": "${{ matrix.target.page_arch }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "built_by": "github-actions / ${{ github.workflow }} / ${{ github.run_id }}"
+          }
+          EOF
+          outname="page-python-cpython-${{ matrix.target.page_os }}-${{ matrix.target.page_arch }}-${{ matrix.version }}.tar.gz"
+          tar -czf "$outname" -C bundle .
+          ls -lh "$outname"
+          echo "outname=$outname" >> "$GITHUB_OUTPUT"
+
+      - name: Upload as release asset
+        if: steps.download.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || 'python-bundle' }}
+          name: Python portable bundles
+          make_latest: false
+          body: |
+            Portable CPython builds from [python-build-standalone](https://github.com/astral-sh/python-build-standalone),
+            repacked for PAGE IDE's `PythonInstaller`.
+          files: ${{ steps.pack.outputs.outname }}
+          fail_on_unmatched_files: true
