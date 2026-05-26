@@ -1,0 +1,103 @@
+name: Build MinGW-w64 portable bundle
+
+on:
+  schedule:
+    - cron: '30 8 * * 1'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'GitHub release tag'
+        default: 'mingw-bundle'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { page_arch: x86_64, winlibs_arch: x86_64, thread: posix, rt: ucrt }
+    steps:
+      - name: Find latest winlibs release
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          releases_json=$(curl -sSfL \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/brechtsanders/winlibs_mingw/releases?per_page=5")
+
+          pattern="winlibs-${{ matrix.target.winlibs_arch }}-${{ matrix.target.thread }}-${{ matrix.target.rt }}.*\\.7z"
+          url=$(echo "$releases_json" | jq -r --arg p "$pattern" \
+            '[ .[].assets[].browser_download_url | select(test($p)) ] | first // empty')
+
+          if [ -z "$url" ]; then
+            echo "::error::No winlibs asset found"
+            exit 1
+          fi
+
+          ver=$(echo "$releases_json" | jq -r '.[0].tag_name // empty')
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "Found: $url (version=$ver)"
+
+      - name: Download and repack
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="${{ steps.resolve.outputs.url }}"
+          ver="${{ steps.resolve.outputs.version }}"
+
+          curl -sSfL --max-time 600 -o mingw.7z "$url"
+          ls -lh mingw.7z
+
+          sudo apt-get install -y p7zip-full > /dev/null 2>&1
+          7z x mingw.7z -omingw_extracted > /dev/null
+
+          inner=$(ls mingw_extracted | head -1)
+          if [ -z "$inner" ]; then
+            echo "::error::Empty archive"
+            exit 1
+          fi
+          mv "mingw_extracted/$inner" bundle
+
+          if [ ! -f bundle/bin/gcc.exe ] && [ ! -f bundle/bin/gcc ]; then
+            echo "::error::gcc not found in bundle/bin/"
+            ls bundle/bin/ | head -20
+            exit 1
+          fi
+
+          cat > bundle/page-bundle-manifest.json <<EOF
+          {
+            "mingw_version": "$ver",
+            "page_os": "windows",
+            "page_arch": "${{ matrix.target.page_arch }}",
+            "thread_model": "${{ matrix.target.thread }}",
+            "runtime": "${{ matrix.target.rt }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+
+          safe_ver=$(echo "$ver" | tr '+' '-' | tr '/' '-')
+          outname="page-cpp-mingw-windows-${{ matrix.target.page_arch }}-${safe_ver}.tar.gz"
+          tar -czf "$outname" -C bundle .
+          ls -lh "$outname"
+          echo "outname=$outname" >> "$GITHUB_OUTPUT"
+
+      - name: Upload as release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || 'mingw-bundle' }}
+          name: MinGW-w64 portable bundles
+          make_latest: false
+          body: |
+            Portable MinGW-w64 (winlibs) toolchain for PAGE IDE.
+            Includes gcc, g++, gdb, make.
+          files: ${{ steps.pack.outputs.outname }}
+          fail_on_unmatched_files: true
