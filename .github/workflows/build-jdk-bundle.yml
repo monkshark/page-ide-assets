@@ -32,20 +32,22 @@ jobs:
             m=$(echo "$m" | tr -d ' ')
             [ -z "$m" ] && continue
             next=$((m + 1))
-            url="https://api.adoptium.net/v3/info/release_versions?release_type=ga&page_size=5&heap_size=normal&image_type=jdk&jvm_impl=hotspot&vendor=eclipse&version=%5B${m}%2C${next}%29&sort_order=DESC"
-            echo "GET $url"
-            resp=$(curl -sSfL "$url")
-            count=$(echo "$resp" | jq '.versions | length')
+            ver_url="https://api.adoptium.net/v3/info/release_versions?release_type=ga&page_size=5&heap_size=normal&image_type=jdk&jvm_impl=hotspot&vendor=eclipse&version=%5B${m}%2C${next}%29&sort_order=DESC"
+            name_url="https://api.adoptium.net/v3/info/release_names?release_type=ga&page_size=5&heap_size=normal&image_type=jdk&jvm_impl=hotspot&vendor=eclipse&version=%5B${m}%2C${next}%29&sort_order=DESC"
+            echo "GET $ver_url"
+            ver_resp=$(curl -sSfL "$ver_url")
+            name_resp=$(curl -sSfL "$name_url")
+            count=$(echo "$ver_resp" | jq '.versions | length')
             if [ "$count" = "0" ]; then
               echo "::warning::No GA patch found for major $m — skipping"
               continue
             fi
             for i in $(seq 0 $((count - 1))); do
-              semver=$(echo "$resp" | jq -r ".versions[$i].semver // empty" | sed 's/\.0\.LTS//' | sed 's/\.LTS//')
-              openjdk=$(echo "$resp" | jq -r ".versions[$i].openjdk_version // empty")
-              [ -z "$semver" ] || [ -z "$openjdk" ] && continue
-              echo "  major=$m semver=$semver openjdk=$openjdk"
-              out=$(echo "$out" | jq --arg m "$m" --arg v "$semver" --arg o "$openjdk" '. + [{major: ($m|tonumber), version: $v, openjdk_version: $o}]')
+              semver=$(echo "$ver_resp" | jq -r ".versions[$i].semver // empty" | sed 's/\.0\.LTS//' | sed 's/\.LTS//')
+              rel_name=$(echo "$name_resp" | jq -r ".releases[$i] // empty")
+              [ -z "$semver" ] || [ -z "$rel_name" ] && continue
+              echo "  major=$m semver=$semver release_name=$rel_name"
+              out=$(echo "$out" | jq --arg m "$m" --arg v "$semver" --arg r "$rel_name" '. + [{major: ($m|tonumber), version: $v, release_name: $r}]')
             done
           done
           if [ "$(echo "$out" | jq 'length')" = "0" ]; then
@@ -76,13 +78,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ver='${{ matrix.entry.openjdk_version }}'
-          enc=$(jq -rn --arg v "jdk-$ver" '$v|@uri')
+          rel='${{ matrix.entry.release_name }}'
+          enc=$(jq -rn --arg v "$rel" '$v|@uri')
           url="https://api.adoptium.net/v3/binary/version/${enc}/${{ matrix.target.adoptium_os }}/${{ matrix.target.adoptium_arch }}/jdk/hotspot/normal/eclipse?project=jdk"
           echo "GET $url"
           http_code=$(curl -sSL --max-time 600 -o upstream.archive -w '%{http_code}' "$url")
           if [ "$http_code" != "200" ]; then
-            echo "::warning::No JDK for ${{ matrix.target.adoptium_os }}-${{ matrix.target.adoptium_arch }} at $ver (HTTP $http_code) — skipping"
+            echo "::warning::No JDK for ${{ matrix.target.adoptium_os }}-${{ matrix.target.adoptium_arch }} at $rel (HTTP $http_code) — skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -136,7 +138,7 @@ jobs:
           cat > bundle/page-bundle-manifest.json <<EOF
           {
             "jdk_version": "${{ matrix.entry.version }}",
-            "jdk_openjdk_version": "${{ matrix.entry.openjdk_version }}",
+            "jdk_release_name": "${{ matrix.entry.release_name }}",
             "jdk_major": ${{ matrix.entry.major }},
             "jdk_vendor": "temurin",
             "adoptium_os": "${{ matrix.target.adoptium_os }}",
