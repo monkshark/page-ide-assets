@@ -118,6 +118,11 @@ jobs:
               exit 1
               ;;
           esac
+          if [ ! -d bundle/bin ] && [ -d bundle/Contents/Home/bin ]; then
+            echo "macOS .app layout detected — promoting Contents/Home/* to bundle root"
+            mv bundle/Contents/Home/* bundle/
+            rm -rf bundle/Contents
+          fi
           if [ ! -d bundle/bin ]; then
             echo "::error::Unpacked archive missing bin/ — layout unexpected"
             ls -la bundle | head -20
