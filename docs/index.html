@@ -124,7 +124,7 @@
   }
 
   function parseAssetName(name) {
-    const m = /^page-([a-z0-9]+)-([a-z0-9]+)-([a-z0-9]+)-([a-z0-9_]+)-(.+?)\.(zip|tar\.gz|tar\.xz|tgz)$/i.exec(name);
+    const m = /^page-([a-z0-9]+)-([a-z0-9]+)-([a-z0-9]+)-([a-z0-9_]+)-(.+?)\.(zip|tar\.gz|tar\.xz|tgz|gz)$/i.exec(name);
     if (!m) return null;
     return { language: m[1], tool: m[2], os: m[3], arch: m[4], version: m[5], ext: m[6] };
   }
