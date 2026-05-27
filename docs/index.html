@@ -157,7 +157,16 @@
   }
 
   function renderRelease(rel) {
-    const assets = rel.assets || [];
+    const assets = (rel.assets || []).slice().sort((a, b) => {
+      const pa = parseAssetName(a.name);
+      const pb = parseAssetName(b.name);
+      if (pa && pb) {
+        if (pa.version !== pb.version) return pb.version.localeCompare(pa.version);
+        const osOrder = (pa.os + pa.arch).localeCompare(pb.os + pb.arch);
+        if (osOrder !== 0) return osOrder;
+      }
+      return a.name.localeCompare(b.name);
+    });
     const rows = assets.map(a => {
       const parsed = parseAssetName(a.name);
       const pills = parsed
