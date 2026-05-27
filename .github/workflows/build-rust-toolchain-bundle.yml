@@ -1,0 +1,185 @@
+name: Build Rust toolchain bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_version:
+        description: 'Minimum Rust stable version to build (inclusive, e.g. 1.70.0).'
+        default: '1.70.0'
+        required: true
+      release_tag:
+        description: 'GitHub release tag (groups Rust toolchain bundles)'
+        default: 'rust-toolchain-bundle'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  enumerate:
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.list.outputs.versions }}
+    steps:
+      - name: Fetch stable Rust release versions
+        id: list
+        shell: bash
+        run: |
+          set -euo pipefail
+          all_tags=''
+          page=1
+          while :; do
+            resp=$(curl -sSfL \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/rust-lang/rust/releases?per_page=100&page=$page")
+            chunk=$(echo "$resp" | jq -r '.[] | select(.prerelease == false and .draft == false) | .tag_name' || true)
+            if [ -z "$chunk" ]; then break; fi
+            all_tags=$(printf '%s\n%s\n' "$all_tags" "$chunk")
+            page=$((page + 1))
+            if [ "$page" -gt 5 ]; then break; fi
+          done
+          semver=$(echo "$all_tags" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -uV)
+          min='${{ inputs.min_version }}'
+          filtered=$(echo "$semver" | awk -v min="$min" '
+            function vercmp(a, b,   ai, bi, n, m, i, lim) {
+              n = split(a, ai, ".")
+              m = split(b, bi, ".")
+              lim = (n < m) ? n : m
+              for (i = 1; i <= lim; i++) {
+                if (ai[i]+0 < bi[i]+0) return -1
+                if (ai[i]+0 > bi[i]+0) return 1
+              }
+              return n - m
+            }
+            { if (vercmp($0, min) >= 0) print $0 }
+          ' | sort -V)
+          if [ -z "$filtered" ]; then
+            echo "::error::No Rust versions matched min=$min"
+            exit 1
+          fi
+          json=$(echo "$filtered" | jq -R . | jq -s -c .)
+          echo "versions=$json" >> "$GITHUB_OUTPUT"
+          echo "Versions ($(echo "$filtered" | wc -l) total): $json"
+
+  build:
+    needs: enumerate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        version: ${{ fromJSON(needs.enumerate.outputs.versions) }}
+        target:
+          - { page_os: linux,   page_arch: x86_64,  rust_triple: x86_64-unknown-linux-gnu,  ext: tar.gz }
+          - { page_os: linux,   page_arch: aarch64, rust_triple: aarch64-unknown-linux-gnu, ext: tar.gz }
+          - { page_os: macos,   page_arch: x86_64,  rust_triple: x86_64-apple-darwin,       ext: tar.gz }
+          - { page_os: macos,   page_arch: aarch64, rust_triple: aarch64-apple-darwin,       ext: tar.gz }
+          - { page_os: windows, page_arch: x86_64,  rust_triple: x86_64-pc-windows-msvc,    ext: tar.gz }
+    steps:
+      - name: Download Rust standalone installer
+        id: download
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://static.rust-lang.org/dist/rust-${{ matrix.version }}-${{ matrix.target.rust_triple }}.tar.gz"
+          echo "GET $url"
+          http_code=$(curl -sSL -o upstream.tar.gz -w '%{http_code}' "$url")
+          if [ "$http_code" != "200" ]; then
+            echo "::warning::No toolchain for ${{ matrix.target.rust_triple }} at ${{ matrix.version }} (HTTP $http_code) — skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ls -lh upstream.tar.gz
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Extract and reorganize
+        if: steps.download.outputs.skip != 'true'
+        id: reorg
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p extracted
+          tar -xzf upstream.tar.gz -C extracted --strip-components=1
+
+          mkdir -p bundle/bin bundle/lib
+
+          # rustc
+          if [ -d extracted/rustc/bin ]; then
+            cp -a extracted/rustc/bin/* bundle/bin/
+          fi
+          if [ -d extracted/rustc/lib ]; then
+            cp -a extracted/rustc/lib/* bundle/lib/
+          fi
+
+          # cargo
+          if [ -d extracted/cargo/bin ]; then
+            cp -a extracted/cargo/bin/* bundle/bin/
+          fi
+
+          # rust-std
+          for std_dir in extracted/rust-std-*/; do
+            if [ -d "$std_dir/lib" ]; then
+              cp -a "$std_dir/lib/"* bundle/lib/ 2>/dev/null || true
+            fi
+          done
+
+          # rustfmt, clippy (if present)
+          for comp in rustfmt clippy; do
+            if [ -d "extracted/$comp-preview/bin" ]; then
+              cp -a "extracted/$comp-preview/bin/"* bundle/bin/
+            elif [ -d "extracted/$comp/bin" ]; then
+              cp -a "extracted/$comp/bin/"* bundle/bin/
+            fi
+          done
+
+          # manifest
+          cat > bundle/page-bundle-manifest.json <<EOF
+          {
+            "rust_version": "${{ matrix.version }}",
+            "rust_triple": "${{ matrix.target.rust_triple }}",
+            "page_os": "${{ matrix.target.page_os }}",
+            "page_arch": "${{ matrix.target.page_arch }}",
+            "upstream_url": "https://static.rust-lang.org/dist/rust-${{ matrix.version }}-${{ matrix.target.rust_triple }}.tar.gz",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "built_by": "github-actions / ${{ github.workflow }} / ${{ github.run_id }}"
+          }
+          EOF
+
+          echo "--- bundle/bin ---"
+          ls -la bundle/bin/ || true
+          echo "--- bundle/lib (top) ---"
+          ls bundle/lib/ | head -20 || true
+
+      - name: Pack as PAGE bundle
+        if: steps.download.outputs.skip != 'true'
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          outname="page-rust-toolchain-${{ matrix.target.page_os }}-${{ matrix.target.page_arch }}-${{ matrix.version }}.tar.gz"
+          tar -czf "$outname" -C bundle .
+          ls -lh "$outname"
+          echo "outname=$outname" >> "$GITHUB_OUTPUT"
+
+      - name: Upload as release asset
+        if: steps.download.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: Rust toolchain bundles
+          make_latest: false
+          body: |
+            Prebuilt portable Rust toolchain bundles, auto-fetched by [PAGE IDE](https://github.com/monkshark/page-ide)'s `RustToolchainInstaller`.
+
+            Each bundle contains `bin/rustc`, `bin/cargo`, `bin/rustfmt`,
+            `bin/clippy-driver`, and the standard library under `lib/rustlib/`.
+            The upstream Rust standalone installer is downloaded, extracted,
+            and reorganized into a flat `bin/` + `lib/` layout ready for
+            direct use without `rustup` or an install script.
+
+            Assets are added to this tag as new Rust stable releases are built.
+
+            See the repository [README](https://github.com/monkshark/page-ide-assets#readme).
+          files: ${{ steps.pack.outputs.outname }}
+          fail_on_unmatched_files: true
