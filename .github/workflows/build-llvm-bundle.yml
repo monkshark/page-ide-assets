@@ -44,11 +44,10 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - { page_os: linux,   page_arch: x86_64,  llvm_suffix: x86_64-linux-gnu-ubuntu-22.04, ext: tar.xz }
-          - { page_os: linux,   page_arch: aarch64, llvm_suffix: aarch64-linux-gnu,              ext: tar.xz }
-          - { page_os: macos,   page_arch: x86_64,  llvm_suffix: x86_64-apple-darwin,            ext: tar.xz }
-          - { page_os: macos,   page_arch: aarch64, llvm_suffix: arm64-apple-darwin24.2.0,       ext: tar.xz }
-          - { page_os: windows, page_arch: x86_64,  llvm_suffix: x86_64-pc-windows-msvc,         ext: tar.xz }
+          - { page_os: linux,   page_arch: x86_64,  pattern: "LLVM-{ver}-Linux-X64\\.tar\\.xz",           ext: tar.xz }
+          - { page_os: linux,   page_arch: aarch64, pattern: "LLVM-{ver}-Linux-ARM64\\.tar\\.xz",          ext: tar.xz }
+          - { page_os: macos,   page_arch: aarch64, pattern: "LLVM-{ver}-macOS-ARM64\\.tar\\.xz",          ext: tar.xz }
+          - { page_os: windows, page_arch: x86_64,  pattern: "clang\\+llvm-{ver}-x86_64-pc-windows-msvc\\.tar\\.xz", ext: tar.xz }
     steps:
       - name: Download LLVM release
         id: download
@@ -57,22 +56,21 @@ jobs:
           set -euo pipefail
           ver="${{ needs.resolve.outputs.version }}"
           tag="llvmorg-${ver}"
-          suffix="${{ matrix.target.llvm_suffix }}"
-          ext="${{ matrix.target.ext }}"
+          raw_pattern='${{ matrix.target.pattern }}'
+          regex="${raw_pattern//\{ver\}/$ver}"
 
           assets_json=$(curl -sSfL \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/llvm/llvm-project/releases/tags/$tag")
 
-          pattern="LLVM-${ver}-${suffix}\\.${ext//./\\.}"
-          alt_pattern="clang\\+llvm-${ver}-${suffix}[^\"]*\\.${ext//./\\.}"
-
-          url=$(echo "$assets_json" | jq -r --arg p "$pattern" --arg ap "$alt_pattern" \
-            '[ .assets[].browser_download_url | select(test($p) or test($ap)) ] | first // empty')
+          url=$(echo "$assets_json" | jq -r --arg p "$regex" \
+            '[ .assets[].browser_download_url | select(test($p)) ] | first // empty')
 
           if [ -z "$url" ]; then
-            echo "::warning::No LLVM asset for $suffix — skipping"
+            echo "Available assets:"
+            echo "$assets_json" | jq -r '.assets[].name' | head -20
+            echo "::warning::No LLVM asset matching $regex — skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
