@@ -9,7 +9,7 @@ on:
         required: true
       release_tag:
         description: 'GitHub release tag (groups rust-analyzer bundles)'
-        default: 'rust-analyzer-bundle'
+        default: 'rust-bundle'
         required: true
 
 permissions:

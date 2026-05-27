@@ -9,7 +9,7 @@ on:
         required: true
       release_tag:
         description: 'GitHub release tag (groups Rust toolchain bundles)'
-        default: 'rust-toolchain-bundle'
+        default: 'rust-bundle'
         required: true
 
 permissions:
