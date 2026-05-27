@@ -22,6 +22,7 @@ Browse the current asset catalog at
 | Flutter      | `flutter-sdk-bundle` | Flutter SDK stable releases (per OS / arch / version)                     |
 | Rust (LSP)   | `rust-analyzer-bundle` | rust-analyzer prebuilt binaries (per OS / arch / release date)          |
 | Rust (SDK)   | `rust-toolchain-bundle`| Rust standalone toolchain — rustc + cargo + std (per OS / arch / ver)   |
+| .NET         | `dotnet-bundle`      | .NET SDK portable builds (per OS / arch / version)                       |
 | Go           | `gopls-bundle`       | Go SDK + prebuilt gopls (planned)                                        |
 
 ### Naming convention
@@ -74,6 +75,7 @@ covering the assets. Representative components:
 - gopls — BSD 3-clause
 - Eclipse JDT-LS — EPL 2.0
 - Rust / Cargo / rust-analyzer — MIT / Apache 2.0
+- .NET SDK — MIT
 
 Refer to each upstream project for full license text.
 
@@ -130,6 +132,7 @@ PAGE IDE 의 내장 인스톨러가 런타임에 자동으로 받아가는 LSP·
 | Flutter   | `flutter-sdk-bundle` | Flutter SDK stable 릴리스 (OS / arch / 버전별)                       |
 | Rust(LSP) | `rust-analyzer-bundle` | rust-analyzer 프리빌트 바이너리 (OS / arch / 릴리스 날짜별)          |
 | Rust(SDK) | `rust-toolchain-bundle`| Rust 독립 툴체인 — rustc + cargo + std (OS / arch / 버전별)          |
+| .NET      | `dotnet-bundle`      | .NET SDK 포터블 빌드 (OS / arch / 버전별)                            |
 | Go        | `gopls-bundle`       | Go SDK + 프리빌트 gopls (예정)                                       |
 
 ### 네이밍 규칙
