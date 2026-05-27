@@ -16,13 +16,29 @@ permissions:
   contents: write
 
 jobs:
+  enumerate:
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.parse.outputs.versions }}
+    steps:
+      - name: Parse comma-separated versions to JSON array
+        id: parse
+        shell: bash
+        run: |
+          set -euo pipefail
+          input='${{ inputs.versions }}'
+          json=$(echo "$input" | tr ',' '\n' | grep -v '^$' | jq -R . | jq -s -c .)
+          echo "versions=$json" >> "$GITHUB_OUTPUT"
+          echo "Versions: $json"
+
   build:
+    needs: enumerate
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 6
       matrix:
-        version: ${{ fromJSON(format('["{0}"]', join(fromJSON(format('["{0}"]', inputs.versions)), '","'))) }}
+        version: ${{ fromJSON(needs.enumerate.outputs.versions) }}
         target:
           - { page_os: linux,   page_arch: x86_64,  rid: linux-x64,    ext: tar.gz }
           - { page_os: linux,   page_arch: aarch64, rid: linux-arm64,  ext: tar.gz }
@@ -30,15 +46,6 @@ jobs:
           - { page_os: macos,   page_arch: aarch64, rid: osx-arm64,    ext: tar.gz }
           - { page_os: windows, page_arch: x86_64,  rid: win-x64,     ext: zip }
     steps:
-      - name: Parse version matrix
-        id: versions
-        shell: bash
-        run: |
-          set -euo pipefail
-          IFS=',' read -ra vers <<< "${{ inputs.versions }}"
-          json=$(printf '%s\n' "${vers[@]}" | jq -R . | jq -s -c .)
-          echo "list=$json" >> "$GITHUB_OUTPUT"
-
       - name: Download .NET SDK
         id: download
         shell: bash
