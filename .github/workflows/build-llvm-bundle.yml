@@ -18,31 +18,12 @@ permissions:
   contents: write
 
 jobs:
-  resolve:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.ver.outputs.version }}
-    steps:
-      - name: Resolve LLVM version
-        id: ver
-        shell: bash
-        run: |
-          requested="${{ inputs.llvm_version || 'latest' }}"
-          if [ "$requested" = "latest" ]; then
-            ver=$(curl -sSfL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/llvm/llvm-project/releases/latest" | jq -r '.tag_name // empty' | sed 's/^llvmorg-//')
-          else
-            ver="$requested"
-          fi
-          echo "version=$ver" >> "$GITHUB_OUTPUT"
-          echo "Resolved LLVM version: $ver"
-
   build:
-    needs: resolve
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        version: ["20.1.6", "21.0.0", "22.1.0"]
         target:
           - { page_os: linux,   page_arch: x86_64,  prefix: "LLVM-",       suffix: "-Linux-X64",                         ext: tar.xz }
           - { page_os: linux,   page_arch: aarch64, prefix: "LLVM-",       suffix: "-Linux-ARM64",                       ext: tar.xz }
@@ -54,7 +35,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ver="${{ needs.resolve.outputs.version }}"
+          ver="${{ matrix.version }}"
           tag="llvmorg-${ver}"
           asset_name="${{ matrix.target.prefix }}${ver}${{ matrix.target.suffix }}.${{ matrix.target.ext }}"
           url="https://github.com/llvm/llvm-project/releases/download/${tag}/${asset_name}"
@@ -74,7 +55,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ver="${{ needs.resolve.outputs.version }}"
+          ver="${{ matrix.version }}"
           mkdir bundle
           tar -xf upstream.archive -C bundle --strip-components=1
 
