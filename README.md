@@ -20,6 +20,8 @@ Browse the current asset catalog at
 | Java (JDK)   | `jdk-bundle`         | Eclipse Temurin LTS JDK builds (per OS / arch / version)                  |
 | Dart         | `dart-sdk-bundle`    | Dart SDK stable releases (per OS / arch / version)                        |
 | Flutter      | `flutter-sdk-bundle` | Flutter SDK stable releases (per OS / arch / version)                     |
+| Rust (LSP)   | `rust-analyzer-bundle` | rust-analyzer prebuilt binaries (per OS / arch / release date)          |
+| Rust (SDK)   | `rust-toolchain-bundle`| Rust standalone toolchain — rustc + cargo + std (per OS / arch / ver)   |
 | Go           | `gopls-bundle`       | Go SDK + prebuilt gopls (planned)                                        |
 
 ### Naming convention
@@ -54,6 +56,8 @@ jdk-bundle         / page-java-temurin-windows-x86_64-17.0.13+11.zip
 dart-sdk-bundle    / page-dart-sdk-linux-x86_64-3.5.0.tar.gz
 dart-sdk-bundle    / page-dart-sdk-macos-aarch64-3.5.0.tar.gz
 flutter-sdk-bundle / page-flutter-sdk-windows-x86_64-3.24.0.zip
+rust-analyzer-bundle / page-rust-analyzer-linux-x86_64-2025-05-26.gz
+rust-toolchain-bundle / page-rust-toolchain-macos-aarch64-1.82.0.tar.gz
 ```
 
 ## Upstream licenses
@@ -69,6 +73,7 @@ covering the assets. Representative components:
 - Go SDK — BSD 3-clause
 - gopls — BSD 3-clause
 - Eclipse JDT-LS — EPL 2.0
+- Rust / Cargo / rust-analyzer — MIT / Apache 2.0
 
 Refer to each upstream project for full license text.
 
@@ -123,6 +128,8 @@ PAGE IDE 의 내장 인스톨러가 런타임에 자동으로 받아가는 LSP·
 | Java(JDK) | `jdk-bundle`         | Eclipse Temurin LTS JDK 빌드 (OS / arch / 버전별)                    |
 | Dart      | `dart-sdk-bundle`    | Dart SDK stable 릴리스 (OS / arch / 버전별)                          |
 | Flutter   | `flutter-sdk-bundle` | Flutter SDK stable 릴리스 (OS / arch / 버전별)                       |
+| Rust(LSP) | `rust-analyzer-bundle` | rust-analyzer 프리빌트 바이너리 (OS / arch / 릴리스 날짜별)          |
+| Rust(SDK) | `rust-toolchain-bundle`| Rust 독립 툴체인 — rustc + cargo + std (OS / arch / 버전별)          |
 | Go        | `gopls-bundle`       | Go SDK + 프리빌트 gopls (예정)                                       |
 
 ### 네이밍 규칙
@@ -146,6 +153,8 @@ jdtls-bundle       / page-java-jdtls-noarch-noarch-1.58.0.tar.gz
 dart-sdk-bundle    / page-dart-sdk-linux-x86_64-3.5.0.tar.gz
 dart-sdk-bundle    / page-dart-sdk-macos-aarch64-3.5.0.tar.gz
 flutter-sdk-bundle / page-flutter-sdk-windows-x86_64-3.24.0.zip
+rust-analyzer-bundle / page-rust-analyzer-linux-x86_64-2025-05-26.gz
+rust-toolchain-bundle / page-rust-toolchain-macos-aarch64-1.82.0.tar.gz
 ```
 
 각 릴리즈 태그는 OS / 아키텍처 / 업스트림 버전별로 묶입니다.
