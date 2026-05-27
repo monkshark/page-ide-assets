@@ -44,10 +44,10 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - { page_os: linux,   page_arch: x86_64,  pattern: "LLVM-{ver}-Linux-X64\\.tar\\.xz",           ext: tar.xz }
-          - { page_os: linux,   page_arch: aarch64, pattern: "LLVM-{ver}-Linux-ARM64\\.tar\\.xz",          ext: tar.xz }
-          - { page_os: macos,   page_arch: aarch64, pattern: "LLVM-{ver}-macOS-ARM64\\.tar\\.xz",          ext: tar.xz }
-          - { page_os: windows, page_arch: x86_64,  pattern: "clang\\+llvm-{ver}-x86_64-pc-windows-msvc\\.tar\\.xz", ext: tar.xz }
+          - { page_os: linux,   page_arch: x86_64,  prefix: "LLVM-",       suffix: "-Linux-X64",                         ext: tar.xz }
+          - { page_os: linux,   page_arch: aarch64, prefix: "LLVM-",       suffix: "-Linux-ARM64",                       ext: tar.xz }
+          - { page_os: macos,   page_arch: aarch64, prefix: "LLVM-",       suffix: "-macOS-ARM64",                       ext: tar.xz }
+          - { page_os: windows, page_arch: x86_64,  prefix: "clang+llvm-", suffix: "-x86_64-pc-windows-msvc",            ext: tar.xz }
     steps:
       - name: Download LLVM release
         id: download
@@ -56,26 +56,15 @@ jobs:
           set -euo pipefail
           ver="${{ needs.resolve.outputs.version }}"
           tag="llvmorg-${ver}"
-          raw_pattern='${{ matrix.target.pattern }}'
-          regex="${raw_pattern//\{ver\}/$ver}"
-
-          assets_json=$(curl -sSfL \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/llvm/llvm-project/releases/tags/$tag")
-
-          url=$(echo "$assets_json" | jq -r --arg p "$regex" \
-            '[ .assets[].browser_download_url | select(test($p)) ] | first // empty')
-
-          if [ -z "$url" ]; then
-            echo "Available assets:"
-            echo "$assets_json" | jq -r '.assets[].name' | head -20
-            echo "::warning::No LLVM asset matching $regex — skipping"
+          asset_name="${{ matrix.target.prefix }}${ver}${{ matrix.target.suffix }}.${{ matrix.target.ext }}"
+          url="https://github.com/llvm/llvm-project/releases/download/${tag}/${asset_name}"
+          echo "GET $url"
+          http_code=$(curl -sSL -o upstream.archive -w '%{http_code}' "$url")
+          if [ "$http_code" != "200" ]; then
+            echo "::warning::No LLVM asset $asset_name (HTTP $http_code) — skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "GET $url"
-          curl -sSfL --max-time 600 -o upstream.archive "$url"
           ls -lh upstream.archive
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
