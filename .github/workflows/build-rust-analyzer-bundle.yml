@@ -61,26 +61,27 @@ jobs:
       matrix:
         version: ${{ fromJSON(needs.enumerate.outputs.versions) }}
         target:
-          - { page_os: linux,   page_arch: x86_64,  ra_triple: x86_64-unknown-linux-gnu }
-          - { page_os: linux,   page_arch: aarch64, ra_triple: aarch64-unknown-linux-gnu }
-          - { page_os: macos,   page_arch: x86_64,  ra_triple: x86_64-apple-darwin }
-          - { page_os: macos,   page_arch: aarch64, ra_triple: aarch64-apple-darwin }
-          - { page_os: windows, page_arch: x86_64,  ra_triple: x86_64-pc-windows-msvc }
+          - { page_os: linux,   page_arch: x86_64,  ra_triple: x86_64-unknown-linux-gnu,  upstream_ext: gz }
+          - { page_os: linux,   page_arch: aarch64, ra_triple: aarch64-unknown-linux-gnu, upstream_ext: gz }
+          - { page_os: macos,   page_arch: x86_64,  ra_triple: x86_64-apple-darwin,       upstream_ext: gz }
+          - { page_os: macos,   page_arch: aarch64, ra_triple: aarch64-apple-darwin,       upstream_ext: gz }
+          - { page_os: windows, page_arch: x86_64,  ra_triple: x86_64-pc-windows-msvc,    upstream_ext: zip }
     steps:
       - name: Download rust-analyzer binary
         id: download
         shell: bash
         run: |
           set -euo pipefail
-          url="https://github.com/rust-lang/rust-analyzer/releases/download/${{ matrix.version }}/rust-analyzer-${{ matrix.target.ra_triple }}.gz"
+          ext="${{ matrix.target.upstream_ext }}"
+          url="https://github.com/rust-lang/rust-analyzer/releases/download/${{ matrix.version }}/rust-analyzer-${{ matrix.target.ra_triple }}.$ext"
           echo "GET $url"
-          http_code=$(curl -sSL -o upstream.gz -w '%{http_code}' "$url")
+          http_code=$(curl -sSL -o "upstream.$ext" -w '%{http_code}' "$url")
           if [ "$http_code" != "200" ]; then
             echo "::warning::No binary for ${{ matrix.target.ra_triple }} at ${{ matrix.version }} (HTTP $http_code) — skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          ls -lh upstream.gz
+          ls -lh "upstream.$ext"
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Repack as PAGE bundle
@@ -89,8 +90,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          ext="${{ matrix.target.upstream_ext }}"
           outname="page-rust-analyzer-${{ matrix.target.page_os }}-${{ matrix.target.page_arch }}-${{ matrix.version }}.gz"
-          cp upstream.gz "$outname"
+          if [ "$ext" = "gz" ]; then
+            cp "upstream.gz" "$outname"
+          else
+            unzip -q "upstream.zip" -d extracted
+            bin=$(find extracted -type f -name 'rust-analyzer*' | head -1)
+            gzip -cn "$bin" > "$outname"
+          fi
           ls -lh "$outname"
           echo "outname=$outname" >> "$GITHUB_OUTPUT"
 
