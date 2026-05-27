@@ -58,9 +58,11 @@ jobs:
             echo "::error::No Rust versions matched min=$min"
             exit 1
           fi
-          json=$(echo "$filtered" | jq -R . | jq -s -c .)
+          total=$(echo "$filtered" | wc -l)
+          capped=$(echo "$filtered" | tail -n 50)
+          json=$(echo "$capped" | jq -R . | jq -s -c .)
           echo "versions=$json" >> "$GITHUB_OUTPUT"
-          echo "Versions ($(echo "$filtered" | wc -l) total): $json"
+          echo "Total matching: $total — capped to last 50 (matrix limit 256 = 50×5 targets)"
 
   build:
     needs: enumerate
