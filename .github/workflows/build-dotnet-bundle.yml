@@ -1,0 +1,112 @@
+name: Build .NET SDK bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: 'Comma-separated .NET SDK versions to build (e.g. 6.0.428,8.0.408,9.0.300).'
+        default: '6.0.428,8.0.404,8.0.408,9.0.203,9.0.300'
+        required: true
+      release_tag:
+        description: 'GitHub release tag (groups .NET SDK bundles)'
+        default: 'dotnet-bundle'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        version: ${{ fromJSON(format('["{0}"]', join(fromJSON(format('["{0}"]', inputs.versions)), '","'))) }}
+        target:
+          - { page_os: linux,   page_arch: x86_64,  rid: linux-x64,    ext: tar.gz }
+          - { page_os: linux,   page_arch: aarch64, rid: linux-arm64,  ext: tar.gz }
+          - { page_os: macos,   page_arch: x86_64,  rid: osx-x64,     ext: tar.gz }
+          - { page_os: macos,   page_arch: aarch64, rid: osx-arm64,    ext: tar.gz }
+          - { page_os: windows, page_arch: x86_64,  rid: win-x64,     ext: zip }
+    steps:
+      - name: Parse version matrix
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra vers <<< "${{ inputs.versions }}"
+          json=$(printf '%s\n' "${vers[@]}" | jq -R . | jq -s -c .)
+          echo "list=$json" >> "$GITHUB_OUTPUT"
+
+      - name: Download .NET SDK
+        id: download
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${{ matrix.version }}"
+          rid="${{ matrix.target.rid }}"
+          ext="${{ matrix.target.ext }}"
+          url="https://builds.dotnet.microsoft.com/dotnet/Sdk/${ver}/dotnet-sdk-${ver}-${rid}.${ext}"
+          echo "GET $url"
+          http_code=$(curl -sSL -o "upstream.${ext}" -w '%{http_code}' "$url")
+          if [ "$http_code" != "200" ]; then
+            alt_url="https://dotnetcli.azureedge.net/dotnet/Sdk/${ver}/dotnet-sdk-${ver}-${rid}.${ext}"
+            echo "Primary failed (HTTP $http_code), trying fallback: $alt_url"
+            http_code=$(curl -sSL -o "upstream.${ext}" -w '%{http_code}' "$alt_url")
+            if [ "$http_code" != "200" ]; then
+              echo "::warning::No SDK for ${rid} at ${ver} (HTTP $http_code) — skipping"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          ls -lh "upstream.${ext}"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Repack with PAGE manifest
+        if: steps.download.outputs.skip != 'true'
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${{ matrix.version }}"
+          ext="${{ matrix.target.ext }}"
+          mkdir bundle
+          case "$ext" in
+            tar.gz) tar -xzf "upstream.tar.gz" -C bundle ;;
+            zip)    unzip -q "upstream.zip" -d bundle ;;
+          esac
+          cat > bundle/page-bundle-manifest.json <<EOF
+          {
+            "dotnet_version": "${ver}",
+            "rid": "${{ matrix.target.rid }}",
+            "page_os": "${{ matrix.target.page_os }}",
+            "page_arch": "${{ matrix.target.page_arch }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "built_by": "github-actions / ${{ github.workflow }} / ${{ github.run_id }}"
+          }
+          EOF
+          outname="page-dotnet-sdk-${{ matrix.target.page_os }}-${{ matrix.target.page_arch }}-${ver}.${ext}"
+          case "$ext" in
+            tar.gz) tar -czf "$outname" -C bundle . ;;
+            zip)    (cd bundle && zip -qr "../$outname" .) ;;
+          esac
+          ls -lh "$outname"
+          echo "outname=$outname" >> "$GITHUB_OUTPUT"
+
+      - name: Upload as release asset
+        if: steps.download.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: .NET SDK bundles
+          make_latest: false
+          body: |
+            Prebuilt .NET SDK bundles, auto-fetched by [PAGE IDE](https://github.com/monkshark/page-ide)'s `DotnetSdkInstaller`.
+
+            Each bundle wraps the upstream dotnet-sdk archive with a
+            `page-bundle-manifest.json` and follows the PAGE asset naming convention.
+
+            See the repository [README](https://github.com/monkshark/page-ide-assets#readme).
+          files: ${{ steps.pack.outputs.outname }}
+          fail_on_unmatched_files: true
