@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ["20.1.6", "21.0.0", "22.1.0"]
+        version: ["18.1.8", "19.1.7", "20.1.6", "21.0.0", "22.1.0"]
         target:
           - { page_os: linux,   page_arch: x86_64,  prefix: "LLVM-",       suffix: "-Linux-X64",                         ext: tar.xz }
           - { page_os: linux,   page_arch: aarch64, prefix: "LLVM-",       suffix: "-Linux-ARM64",                       ext: tar.xz }
