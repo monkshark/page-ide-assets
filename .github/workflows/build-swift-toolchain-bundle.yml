@@ -1,0 +1,91 @@
+name: Build Swift toolchain bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'GitHub release tag'
+        default: 'swift-toolchain-bundle'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["5.10.1", "6.0.3"]
+        target:
+          - { page_os: linux,   page_arch: x86_64,  url_path: "ubuntu2204",        suffix: "ubuntu22.04",          ext: tar.gz }
+          - { page_os: linux,   page_arch: aarch64, url_path: "ubuntu2204-aarch64", suffix: "ubuntu22.04-aarch64", ext: tar.gz }
+          - { page_os: macos,   page_arch: aarch64, url_path: "xcode",              suffix: "osx",                  ext: pkg }
+    steps:
+      - name: Download Swift toolchain
+        id: download
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${{ matrix.version }}"
+          tag="swift-${ver}-RELEASE"
+          asset_name="${tag}-${{ matrix.target.suffix }}.${{ matrix.target.ext }}"
+          url="https://download.swift.org/swift-${ver}-release/${{ matrix.target.url_path }}/${tag}/${asset_name}"
+          echo "GET $url"
+          http_code=$(curl -sSL -o upstream.archive -w '%{http_code}' "$url")
+          if [ "$http_code" != "200" ]; then
+            echo "::warning::No Swift asset $asset_name (HTTP $http_code) — skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ls -lh upstream.archive
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Repack as PAGE bundle (tarball OSes)
+        if: steps.download.outputs.skip != 'true' && matrix.target.ext == 'tar.gz'
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${{ matrix.version }}"
+          mkdir bundle
+          tar -xf upstream.archive -C bundle --strip-components=1
+
+          if [ ! -d bundle/usr/bin ]; then
+            echo "::error::Swift toolchain layout unexpected (no usr/bin)"
+            ls bundle | head -20
+            exit 1
+          fi
+          if [ ! -f bundle/usr/bin/sourcekit-lsp ]; then
+            echo "::error::sourcekit-lsp binary not found after extraction"
+            ls bundle/usr/bin | head -20
+            exit 1
+          fi
+
+          cat > bundle/page-bundle-manifest.json <<EOF
+          {
+            "swift_version": "$ver",
+            "page_os": "${{ matrix.target.page_os }}",
+            "page_arch": "${{ matrix.target.page_arch }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+
+          outname="page-swift-toolchain-${{ matrix.target.page_os }}-${{ matrix.target.page_arch }}-${ver}.tar.gz"
+          tar -czf "$outname" -C bundle .
+          ls -lh "$outname"
+          echo "outname=$outname" >> "$GITHUB_OUTPUT"
+
+      - name: Upload as release asset
+        if: steps.download.outputs.skip != 'true' && steps.pack.outputs.outname != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || 'swift-toolchain-bundle' }}
+          name: Swift toolchain bundles
+          make_latest: false
+          body: |
+            Portable Swift toolchain for PAGE IDE.
+            Includes swift, swiftc, sourcekit-lsp.
+          files: ${{ steps.pack.outputs.outname }}
+          fail_on_unmatched_files: true
