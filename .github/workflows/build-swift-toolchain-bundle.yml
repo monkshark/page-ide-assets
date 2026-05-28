@@ -67,6 +67,10 @@ jobs:
           ls -lh "$outname"
           echo "outname=$outname" >> "$GITHUB_OUTPUT"
 
+      - name: Install xar (for macOS pkg)
+        if: steps.download.outputs.skip != 'true' && matrix.target.page_os == 'macos'
+        run: sudo apt-get update && sudo apt-get install -y xar cpio
+
       - name: Repack as PAGE bundle (macOS pkg)
         if: steps.download.outputs.skip != 'true' && matrix.target.page_os == 'macos'
         id: pack-macos
