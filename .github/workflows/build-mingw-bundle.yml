@@ -32,7 +32,9 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/brechtsanders/winlibs_mingw/releases?per_page=5")
 
-          pattern="winlibs-${{ matrix.target.winlibs_arch }}-${{ matrix.target.thread }}-${{ matrix.target.rt }}.*\\.7z"
+          # winlibs asset names: winlibs-x86_64-posix-seh-gcc-X.Y.Z-mingw-w64ucrt-A.B.C-rN.7z
+          # Match only .7z (not .sha256/.sha512/.zip)
+          pattern="winlibs-${{ matrix.target.winlibs_arch }}-${{ matrix.target.thread }}-seh-gcc-.*-mingw-w64${{ matrix.target.rt }}-.*-r[0-9]+\\.7z$"
           url=$(echo "$releases_json" | jq -r --arg p "$pattern" \
             '[ .[].assets[].browser_download_url | select(test($p)) ] | first // empty')
 
