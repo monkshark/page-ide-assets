@@ -191,13 +191,15 @@ jobs:
         run: |
           set -euo pipefail
           ver="${{ matrix.version }}"
-          mkdir -p bundle/usr
-          cp -R "${TC_ROOT}/bin" "bundle/usr/" 2>/dev/null || true
-          cp -R "${TC_ROOT}/lib" "bundle/usr/" 2>/dev/null || true
-          cp -R "${TC_ROOT}/share" "bundle/usr/" 2>/dev/null || true
+          mkdir -p bundle
+          # Swift Windows toolchain layout: TC_ROOT/usr/{bin,lib,share}
+          cp -R "${TC_ROOT}/usr" "bundle/"
           if [ ! -f "bundle/usr/bin/sourcekit-lsp.exe" ]; then
             echo "::error::sourcekit-lsp.exe missing in bundle"
-            ls bundle/usr/bin | head -20
+            echo "TC_ROOT contents:"
+            ls "${TC_ROOT}" | head -20
+            echo "bundle/usr contents:"
+            ls bundle/usr 2>/dev/null | head -20
             exit 1
           fi
           # Bundle vcruntime DLLs next to sourcekit-lsp.exe so they load even without VC++ Redistributable installed
