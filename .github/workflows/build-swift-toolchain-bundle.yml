@@ -12,16 +12,16 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-unix:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         version: ["5.10.1", "6.0.3"]
         target:
-          - { page_os: linux,   page_arch: x86_64,  url_path: "ubuntu2204",        suffix: "ubuntu22.04",          ext: tar.gz }
-          - { page_os: linux,   page_arch: aarch64, url_path: "ubuntu2204-aarch64", suffix: "ubuntu22.04-aarch64", ext: tar.gz }
-          - { page_os: macos,   page_arch: aarch64, url_path: "xcode",              suffix: "osx",                  ext: pkg }
+          - { page_os: linux,   page_arch: x86_64,  url_path: "ubuntu2204",        suffix: "ubuntu22.04" }
+          - { page_os: linux,   page_arch: aarch64, url_path: "ubuntu2204-aarch64", suffix: "ubuntu22.04-aarch64" }
+          - { page_os: macos,   page_arch: aarch64, url_path: "xcode",              suffix: "osx" }
     steps:
       - name: Download Swift toolchain
         id: download
@@ -30,7 +30,9 @@ jobs:
           set -euo pipefail
           ver="${{ matrix.version }}"
           tag="swift-${ver}-RELEASE"
-          asset_name="${tag}-${{ matrix.target.suffix }}.${{ matrix.target.ext }}"
+          ext="tar.gz"
+          if [ "${{ matrix.target.page_os }}" = "macos" ]; then ext="pkg"; fi
+          asset_name="${tag}-${{ matrix.target.suffix }}.${ext}"
           url="https://download.swift.org/swift-${ver}-release/${{ matrix.target.url_path }}/${tag}/${asset_name}"
           echo "GET $url"
           http_code=$(curl -sSL -o upstream.archive -w '%{http_code}' "$url")
@@ -41,44 +43,61 @@ jobs:
           fi
           ls -lh upstream.archive
           echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "ext=$ext" >> "$GITHUB_OUTPUT"
 
-      - name: Repack as PAGE bundle (tarball OSes)
-        if: steps.download.outputs.skip != 'true' && matrix.target.ext == 'tar.gz'
-        id: pack
+      - name: Repack as PAGE bundle (Linux tarball)
+        if: steps.download.outputs.skip != 'true' && matrix.target.page_os == 'linux'
+        id: pack-linux
         shell: bash
         run: |
           set -euo pipefail
           ver="${{ matrix.version }}"
           mkdir bundle
           tar -xf upstream.archive -C bundle --strip-components=1
-
-          if [ ! -d bundle/usr/bin ]; then
-            echo "::error::Swift toolchain layout unexpected (no usr/bin)"
-            ls bundle | head -20
-            exit 1
-          fi
           if [ ! -f bundle/usr/bin/sourcekit-lsp ]; then
             echo "::error::sourcekit-lsp binary not found after extraction"
             ls bundle/usr/bin | head -20
             exit 1
           fi
-
           cat > bundle/page-bundle-manifest.json <<EOF
-          {
-            "swift_version": "$ver",
-            "page_os": "${{ matrix.target.page_os }}",
-            "page_arch": "${{ matrix.target.page_arch }}",
-            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          }
+          {"swift_version":"$ver","page_os":"${{ matrix.target.page_os }}","page_arch":"${{ matrix.target.page_arch }}","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
           EOF
-
           outname="page-swift-toolchain-${{ matrix.target.page_os }}-${{ matrix.target.page_arch }}-${ver}.tar.gz"
           tar -czf "$outname" -C bundle .
           ls -lh "$outname"
           echo "outname=$outname" >> "$GITHUB_OUTPUT"
 
+      - name: Repack as PAGE bundle (macOS pkg)
+        if: steps.download.outputs.skip != 'true' && matrix.target.page_os == 'macos'
+        id: pack-macos
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${{ matrix.version }}"
+          mkdir extract
+          xar -xf upstream.archive -C extract
+          mkdir bundle
+          for payload in extract/*-osx-package.pkg/Payload; do
+            (cd bundle && gunzip -c "../$payload" | cpio -i 2>/dev/null) || true
+          done
+          tc=$(ls -d bundle/Library/Developer/Toolchains/*.xctoolchain 2>/dev/null | head -1)
+          if [ -z "$tc" ] || [ ! -f "$tc/usr/bin/sourcekit-lsp" ]; then
+            echo "::error::sourcekit-lsp not found after pkg extract"
+            find bundle -name sourcekit-lsp | head -5
+            exit 1
+          fi
+          mkdir final
+          cp -R "$tc/." final/
+          cat > final/page-bundle-manifest.json <<EOF
+          {"swift_version":"$ver","page_os":"${{ matrix.target.page_os }}","page_arch":"${{ matrix.target.page_arch }}","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+          EOF
+          outname="page-swift-toolchain-${{ matrix.target.page_os }}-${{ matrix.target.page_arch }}-${ver}.tar.gz"
+          tar -czf "$outname" -C final .
+          ls -lh "$outname"
+          echo "outname=$outname" >> "$GITHUB_OUTPUT"
+
       - name: Upload as release asset
-        if: steps.download.outputs.skip != 'true' && steps.pack.outputs.outname != ''
+        if: steps.download.outputs.skip != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.release_tag || 'swift-toolchain-bundle' }}
@@ -87,5 +106,86 @@ jobs:
           body: |
             Portable Swift toolchain for PAGE IDE.
             Includes swift, swiftc, sourcekit-lsp.
-          files: ${{ steps.pack.outputs.outname }}
+          files: |
+            ${{ steps.pack-linux.outputs.outname }}
+            ${{ steps.pack-macos.outputs.outname }}
+          fail_on_unmatched_files: false
+
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["5.10.1", "6.0.3"]
+    steps:
+      - name: Download and install Swift
+        shell: pwsh
+        run: |
+          $ver = "${{ matrix.version }}"
+          $tag = "swift-$ver-RELEASE"
+          $url = "https://download.swift.org/swift-$ver-release/windows10/$tag/$tag-windows10.exe"
+          Write-Host "GET $url"
+          Invoke-WebRequest -Uri $url -OutFile swift-installer.exe
+          Get-Item swift-installer.exe | Format-List Length
+          Write-Host "Running silent install..."
+          Start-Process -FilePath .\swift-installer.exe -ArgumentList "-q" -Wait -NoNewWindow
+          $swiftRoot = "C:\Program Files\Swift"
+          if (-not (Test-Path $swiftRoot)) {
+            $swiftRoot = "$env:LOCALAPPDATA\Programs\Swift"
+          }
+          if (-not (Test-Path $swiftRoot)) {
+            Write-Error "Swift install directory not found"
+            exit 1
+          }
+          Write-Host "Swift root: $swiftRoot"
+          Get-ChildItem $swiftRoot
+          echo "SWIFT_ROOT=$swiftRoot" >> $env:GITHUB_ENV
+
+      - name: Locate sourcekit-lsp
+        shell: pwsh
+        run: |
+          $lsp = Get-ChildItem -Path "$env:SWIFT_ROOT" -Recurse -Filter "sourcekit-lsp.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $lsp) {
+            Write-Error "sourcekit-lsp.exe not found under $env:SWIFT_ROOT"
+            exit 1
+          }
+          Write-Host "Found: $($lsp.FullName)"
+          $tcRoot = $lsp.Directory.Parent.Parent.FullName
+          Write-Host "Toolchain root: $tcRoot"
+          echo "TC_ROOT=$tcRoot" >> $env:GITHUB_ENV
+
+      - name: Package PAGE bundle (Windows)
+        id: pack-windows
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${{ matrix.version }}"
+          mkdir -p bundle/usr
+          cp -R "${TC_ROOT}/bin" "bundle/usr/" 2>/dev/null || true
+          cp -R "${TC_ROOT}/lib" "bundle/usr/" 2>/dev/null || true
+          cp -R "${TC_ROOT}/share" "bundle/usr/" 2>/dev/null || true
+          if [ ! -f "bundle/usr/bin/sourcekit-lsp.exe" ]; then
+            echo "::error::sourcekit-lsp.exe missing in bundle"
+            ls bundle/usr/bin | head -20
+            exit 1
+          fi
+          cat > bundle/page-bundle-manifest.json <<EOF
+          {"swift_version":"$ver","page_os":"windows","page_arch":"x86_64","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+          EOF
+          outname="page-swift-toolchain-windows-x86_64-${ver}.tar.gz"
+          tar -czf "$outname" -C bundle .
+          ls -lh "$outname"
+          echo "outname=$outname" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Windows bundle
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || 'swift-toolchain-bundle' }}
+          name: Swift toolchain bundles
+          make_latest: false
+          body: |
+            Portable Swift toolchain for PAGE IDE.
+            Includes swift, swiftc, sourcekit-lsp.
+            Note: Windows builds may require Microsoft Visual C++ Redistributable.
+          files: ${{ steps.pack-windows.outputs.outname }}
           fail_on_unmatched_files: true
