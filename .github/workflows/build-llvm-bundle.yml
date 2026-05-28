@@ -65,16 +65,34 @@ jobs:
             exit 1
           fi
 
-          # Drop debugger + docs + examples to stay under GitHub release asset 2GB limit
-          # IDE only needs clang/clang++/clangd/lld; lldb (debugger) is large and unused
-          rm -f bundle/bin/lldb* bundle/bin/lldb-* 2>/dev/null || true
-          rm -rf bundle/lib/python* bundle/lib/lldb* bundle/lib/cmake/lldb 2>/dev/null || true
-          rm -rf bundle/share/doc bundle/share/man bundle/share/clang bundle/share/scan-build bundle/share/scan-view 2>/dev/null || true
+          # Trim aggressively to fit GitHub 2GB asset limit
+          # Keep only essential tools for clangd LSP + clang compilation
+          keep_pattern='^(clang|clang\+\+|clangd|clang-cl|clang-cpp|lld|lld-link|ld\.lld|ld64\.lld|wasm-ld|llvm-ar|llvm-ranlib|llvm-objcopy|llvm-strip|llvm-nm|llvm-readelf|llvm-config|llvm-dwp)(\.exe)?$'
+          # Also keep clang-XX (versioned symlinks/binaries)
+          extra_pattern='^(clang|clang\+\+)-[0-9]+(\.exe)?$'
+          for f in bundle/bin/*; do
+            [ -e "$f" ] || continue
+            name=$(basename "$f")
+            if echo "$name" | grep -qE "$keep_pattern|$extra_pattern"; then
+              continue
+            fi
+            rm -f "$f"
+          done
+          # Remove docs, lldb, python, scan-* (unused), debug runtime libs
+          rm -rf bundle/lib/python* bundle/lib/lldb* bundle/lib/cmake bundle/lib/Remarks* bundle/lib/objects-* 2>/dev/null || true
+          rm -rf bundle/share 2>/dev/null || true
           rm -rf bundle/libexec 2>/dev/null || true
-          # Strip debug symbols from binaries (Linux/macOS only, Windows has different format)
+          rm -rf bundle/include/lldb bundle/include/lld 2>/dev/null || true
+          # Remove static archives (we only need dynamic libs)
+          find bundle/lib -name "*.a" -delete 2>/dev/null || true
+          # Strip debug symbols
           if [ "${{ matrix.target.page_os }}" != "windows" ]; then
             find bundle/bin -type f -exec strip --strip-unneeded {} + 2>/dev/null || true
+            find bundle/lib -name "*.so*" -exec strip --strip-unneeded {} + 2>/dev/null || true
+            find bundle/lib -name "*.dylib" -exec strip --strip-unneeded {} + 2>/dev/null || true
           fi
+          echo "Post-trim sizes:"
+          du -sh bundle/bin bundle/lib bundle/include 2>/dev/null || true
 
           cat > bundle/page-bundle-manifest.json <<EOF
           {
