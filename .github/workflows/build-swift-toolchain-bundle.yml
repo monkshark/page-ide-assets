@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build-unix:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.target.page_os == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -67,10 +67,6 @@ jobs:
           ls -lh "$outname"
           echo "outname=$outname" >> "$GITHUB_OUTPUT"
 
-      - name: Install pkg extraction tools
-        if: steps.download.outputs.skip != 'true' && matrix.target.page_os == 'macos'
-        run: sudo apt-get update && sudo apt-get install -y p7zip-full cpio
-
       - name: Repack as PAGE bundle (macOS pkg)
         if: steps.download.outputs.skip != 'true' && matrix.target.page_os == 'macos'
         id: pack-macos
@@ -78,18 +74,14 @@ jobs:
         run: |
           set -euo pipefail
           ver="${{ matrix.version }}"
-          mkdir extract
-          7z x upstream.archive -oextract
           mkdir bundle
-          # macOS Swift installer pkg: top-level *.pkg/Payload (gzipped cpio archive)
-          for payload in extract/*-osx-package.pkg/Payload extract/*.pkg/Payload; do
-            [ -f "$payload" ] || continue
-            (cd bundle && gunzip -c "../$payload" 2>/dev/null | cpio -i 2>/dev/null) || true
-          done
-          tc=$(ls -d bundle/Library/Developer/Toolchains/*.xctoolchain 2>/dev/null | head -1)
+          # Native pkgutil on macOS runner expands the .pkg cleanly
+          pkgutil --expand-full upstream.archive bundle/expanded
+          tc=$(find bundle/expanded -maxdepth 6 -type d -name "*.xctoolchain" | head -1)
           if [ -z "$tc" ] || [ ! -f "$tc/usr/bin/sourcekit-lsp" ]; then
             echo "::error::sourcekit-lsp not found after pkg extract"
-            find bundle -name sourcekit-lsp | head -5
+            find bundle/expanded -name sourcekit-lsp 2>/dev/null | head -5
+            ls bundle/expanded | head -20
             exit 1
           fi
           mkdir final
