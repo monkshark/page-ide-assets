@@ -154,6 +154,31 @@ jobs:
           Write-Host "Toolchain root: $tcRoot"
           echo "TC_ROOT=$tcRoot" >> $env:GITHUB_ENV
 
+      - name: Bundle VC++ runtime DLLs
+        shell: pwsh
+        run: |
+          $sys32 = "$env:SystemRoot\System32"
+          $dlls = @(
+            "vcruntime140.dll",
+            "vcruntime140_1.dll",
+            "msvcp140.dll",
+            "msvcp140_1.dll",
+            "msvcp140_2.dll",
+            "concrt140.dll"
+          )
+          $dest = "vcredist-payload"
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          foreach ($d in $dlls) {
+            $src = Join-Path $sys32 $d
+            if (Test-Path $src) {
+              Copy-Item $src $dest
+              Write-Host "bundled $d"
+            } else {
+              Write-Host "skip $d (not on runner)"
+            }
+          }
+          echo "VCREDIST_DIR=$((Get-Item $dest).FullName)" >> $env:GITHUB_ENV
+
       - name: Package PAGE bundle (Windows)
         id: pack-windows
         shell: bash
@@ -169,8 +194,13 @@ jobs:
             ls bundle/usr/bin | head -20
             exit 1
           fi
+          # Bundle vcruntime DLLs next to sourcekit-lsp.exe so they load even without VC++ Redistributable installed
+          for dll in "${VCREDIST_DIR}"/*.dll; do
+            [ -f "$dll" ] || continue
+            cp "$dll" bundle/usr/bin/
+          done
           cat > bundle/page-bundle-manifest.json <<EOF
-          {"swift_version":"$ver","page_os":"windows","page_arch":"x86_64","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+          {"swift_version":"$ver","page_os":"windows","page_arch":"x86_64","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","vcruntime_bundled":true}
           EOF
           outname="page-swift-toolchain-windows-x86_64-${ver}.tar.gz"
           tar -czf "$outname" -C bundle .
@@ -186,6 +216,6 @@ jobs:
           body: |
             Portable Swift toolchain for PAGE IDE.
             Includes swift, swiftc, sourcekit-lsp.
-            Note: Windows builds may require Microsoft Visual C++ Redistributable.
+            Windows bundle includes vcruntime DLLs (self-contained, no VC++ Redistributable required).
           files: ${{ steps.pack-windows.outputs.outname }}
           fail_on_unmatched_files: true
