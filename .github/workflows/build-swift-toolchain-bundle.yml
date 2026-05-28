@@ -67,9 +67,9 @@ jobs:
           ls -lh "$outname"
           echo "outname=$outname" >> "$GITHUB_OUTPUT"
 
-      - name: Install xar (for macOS pkg)
+      - name: Install pkg extraction tools
         if: steps.download.outputs.skip != 'true' && matrix.target.page_os == 'macos'
-        run: sudo apt-get update && sudo apt-get install -y xar cpio
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full cpio
 
       - name: Repack as PAGE bundle (macOS pkg)
         if: steps.download.outputs.skip != 'true' && matrix.target.page_os == 'macos'
@@ -79,10 +79,12 @@ jobs:
           set -euo pipefail
           ver="${{ matrix.version }}"
           mkdir extract
-          xar -xf upstream.archive -C extract
+          7z x upstream.archive -oextract
           mkdir bundle
-          for payload in extract/*-osx-package.pkg/Payload; do
-            (cd bundle && gunzip -c "../$payload" | cpio -i 2>/dev/null) || true
+          # macOS Swift installer pkg: top-level *.pkg/Payload (gzipped cpio archive)
+          for payload in extract/*-osx-package.pkg/Payload extract/*.pkg/Payload; do
+            [ -f "$payload" ] || continue
+            (cd bundle && gunzip -c "../$payload" 2>/dev/null | cpio -i 2>/dev/null) || true
           done
           tc=$(ls -d bundle/Library/Developer/Toolchains/*.xctoolchain 2>/dev/null | head -1)
           if [ -z "$tc" ] || [ ! -f "$tc/usr/bin/sourcekit-lsp" ]; then
