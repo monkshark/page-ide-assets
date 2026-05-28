@@ -77,15 +77,24 @@ jobs:
           mkdir bundle
           # Native pkgutil on macOS runner expands the .pkg cleanly
           pkgutil --expand-full upstream.archive bundle/expanded
-          tc=$(find bundle/expanded -maxdepth 6 -type d -name "*.xctoolchain" | head -1)
-          if [ -z "$tc" ] || [ ! -f "$tc/usr/bin/sourcekit-lsp" ]; then
+          # Swift macOS pkg layout: bundle/expanded/swift-X.Y.Z-RELEASE-osx-package.pkg/Payload/usr/bin/sourcekit-lsp
+          lsp=$(find bundle/expanded -type f -name sourcekit-lsp | head -1)
+          if [ -z "$lsp" ]; then
             echo "::error::sourcekit-lsp not found after pkg extract"
-            find bundle/expanded -name sourcekit-lsp 2>/dev/null | head -5
             ls bundle/expanded | head -20
             exit 1
           fi
+          # toolchain root = parent of usr/ (i.e. parent of dirname(dirname(lsp)))
+          usr_dir=$(dirname "$(dirname "$lsp")")
+          tc=$(dirname "$usr_dir")
+          echo "toolchain root: $tc"
           mkdir final
           cp -R "$tc/." final/
+          if [ ! -f final/usr/bin/sourcekit-lsp ]; then
+            echo "::error::sourcekit-lsp missing in final bundle"
+            ls final/usr/bin 2>/dev/null | head -10
+            exit 1
+          fi
           cat > final/page-bundle-manifest.json <<EOF
           {"swift_version":"$ver","page_os":"${{ matrix.target.page_os }}","page_arch":"${{ matrix.target.page_arch }}","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
           EOF
