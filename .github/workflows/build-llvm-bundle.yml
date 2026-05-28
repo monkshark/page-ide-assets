@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ["20.1.6", "21.0.0", "22.1.0"]
+        version: ["18.1.8", "19.1.7", "20.1.6", "21.0.0", "22.1.0"]
         target:
           - { page_os: linux,   page_arch: x86_64,  prefix: "LLVM-",       suffix: "-Linux-X64",                         ext: tar.xz }
           - { page_os: linux,   page_arch: aarch64, prefix: "LLVM-",       suffix: "-Linux-ARM64",                       ext: tar.xz }
@@ -65,6 +65,17 @@ jobs:
             exit 1
           fi
 
+          # Drop debugger + docs + examples to stay under GitHub release asset 2GB limit
+          # IDE only needs clang/clang++/clangd/lld; lldb (debugger) is large and unused
+          rm -f bundle/bin/lldb* bundle/bin/lldb-* 2>/dev/null || true
+          rm -rf bundle/lib/python* bundle/lib/lldb* bundle/lib/cmake/lldb 2>/dev/null || true
+          rm -rf bundle/share/doc bundle/share/man bundle/share/clang bundle/share/scan-build bundle/share/scan-view 2>/dev/null || true
+          rm -rf bundle/libexec 2>/dev/null || true
+          # Strip debug symbols from binaries (Linux/macOS only, Windows has different format)
+          if [ "${{ matrix.target.page_os }}" != "windows" ]; then
+            find bundle/bin -type f -exec strip --strip-unneeded {} + 2>/dev/null || true
+          fi
+
           cat > bundle/page-bundle-manifest.json <<EOF
           {
             "llvm_version": "$ver",
@@ -75,8 +86,14 @@ jobs:
           EOF
 
           outname="page-cpp-llvm-${{ matrix.target.page_os }}-${{ matrix.target.page_arch }}-${ver}.tar.gz"
-          tar -czf "$outname" -C bundle .
+          tar --use-compress-program="gzip -9" -cf "$outname" -C bundle .
           ls -lh "$outname"
+          size=$(stat -c%s "$outname" 2>/dev/null || stat -f%z "$outname")
+          echo "Final bundle size: $size bytes"
+          if [ "$size" -gt 2147483647 ]; then
+            echo "::error::Bundle exceeds GitHub 2GB asset limit ($size bytes)"
+            exit 1
+          fi
           echo "outname=$outname" >> "$GITHUB_OUTPUT"
 
       - name: Upload as release asset
@@ -88,6 +105,7 @@ jobs:
           make_latest: false
           body: |
             Portable LLVM/Clang toolchain for PAGE IDE.
-            Includes clang, clang++, clangd, lld, lldb.
+            Includes clang, clang++, clangd, lld.
+            Note: lldb and other large unused components removed to fit GitHub asset size limit.
           files: ${{ steps.pack.outputs.outname }}
           fail_on_unmatched_files: true
