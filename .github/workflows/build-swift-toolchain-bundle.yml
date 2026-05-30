@@ -285,9 +285,9 @@ jobs:
           # sourcekit-lsp can resolve Swift/Foundation imports. PAGE sets SDKROOT to <install>/sdk.
           mkdir -p bundle/sdk
           cp -R "${SWIFT_SDK_STAGE}/." bundle/sdk/
-          if [ ! -f "bundle/sdk/usr/lib/swift/windows/x86_64/Swift.swiftmodule" ]; then
+          if [ -z "$(find bundle/sdk -name Swift.swiftmodule -print -quit 2>/dev/null)" ]; then
             echo "::error::Swift.swiftmodule missing from bundle/sdk after SDK copy"
-            ls bundle/sdk/usr/lib/swift/windows 2>/dev/null | head -20
+            find bundle/sdk -maxdepth 6 -name '*.swiftmodule' 2>/dev/null | head -20
             exit 1
           fi
           cat > bundle/page-bundle-manifest.json <<EOF
