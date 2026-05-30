@@ -203,27 +203,46 @@ jobs:
           Get-ChildItem $runtimeBin -Filter *.dll | ForEach-Object { Write-Host "  $($_.Name)" }
           echo "RUNTIME_BIN=$runtimeBin" >> $env:GITHUB_ENV
 
-      - name: Locate Swift Windows SDK
+      - name: Stage Swift Windows SDK
         shell: pwsh
         run: |
           # swiftc / sourcekit-lsp need the Swift Windows SDK — the standard-library .swiftmodule
           # tree (Swift.swiftmodule, Foundation.swiftmodule, ...) — to resolve imports and provide
-          # semantic completion. It lives under Platforms\...\Windows.platform\Developer\SDKs\Windows.sdk,
-          # separate from the toolchain usr, so the bundle must pull it in explicitly.
-          $sdk = Get-ChildItem -Path "$env:SWIFT_ROOT" -Recurse -Directory -Filter "Windows.sdk" -ErrorAction SilentlyContinue | Select-Object -First 1
+          # semantic completion. It lives under Platforms\<ver>\Windows.platform\Developer\SDKs\Windows.sdk,
+          # often behind directory junctions that Get-ChildItem -Recurse skips by default. Walk the
+          # known layout explicitly, fall back to a forced recursive search, then copy into a plain
+          # staging dir (dereferencing junctions) so the bash packaging step gets real files.
+          $platforms = Join-Path $env:SWIFT_ROOT "Platforms"
+          $sdk = $null
+          foreach ($p in (Get-ChildItem $platforms -Directory -ErrorAction SilentlyContinue)) {
+            $cand = Join-Path $p.FullName "Windows.platform\Developer\SDKs\Windows.sdk"
+            if (Test-Path $cand) { $sdk = (Get-Item $cand).FullName; break }
+          }
+          if (-not $sdk) {
+            $found = Get-ChildItem -Path "$env:SWIFT_ROOT" -Recurse -Force -Directory -Filter "Windows.sdk" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $sdk = $found.FullName }
+          }
           if (-not $sdk) {
             Write-Error "Windows.sdk not found under $env:SWIFT_ROOT — Swift stdlib modules missing"
+            Get-ChildItem $platforms -Recurse -Directory -ErrorAction SilentlyContinue | Select-Object -First 30 FullName | ForEach-Object { Write-Host "  $($_.FullName)" }
             exit 1
           }
-          $sdkPath = $sdk.FullName
-          Write-Host "Swift Windows SDK: $sdkPath"
-          $mod = Join-Path $sdkPath "usr\lib\swift\windows\x86_64\Swift.swiftmodule"
+          Write-Host "Swift Windows SDK: $sdk"
+          $mod = Join-Path $sdk "usr\lib\swift\windows\x86_64\Swift.swiftmodule"
           if (-not (Test-Path $mod)) {
             Write-Error "Swift.swiftmodule not found at expected SDK path: $mod"
-            Get-ChildItem (Join-Path $sdkPath "usr\lib\swift\windows") -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name)" }
+            Get-ChildItem (Join-Path $sdk "usr\lib\swift\windows") -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name)" }
             exit 1
           }
-          echo "SWIFT_SDK=$sdkPath" >> $env:GITHUB_ENV
+          $stage = Join-Path $env:GITHUB_WORKSPACE "sdk-stage"
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item -Path (Join-Path $sdk '*') -Destination $stage -Recurse -Force
+          if (-not (Test-Path (Join-Path $stage "usr\lib\swift\windows\x86_64\Swift.swiftmodule"))) {
+            Write-Error "Swift.swiftmodule missing from staged SDK copy"
+            exit 1
+          }
+          echo "SWIFT_SDK_STAGE=$($stage -replace '\\','/')" >> $env:GITHUB_ENV
 
       - name: Package PAGE bundle (Windows)
         id: pack-windows
@@ -261,7 +280,7 @@ jobs:
           # Bundle the Swift Windows SDK (stdlib .swiftmodule tree) under bundle/sdk so swiftc and
           # sourcekit-lsp can resolve Swift/Foundation imports. PAGE sets SDKROOT to <install>/sdk.
           mkdir -p bundle/sdk
-          cp -R "${SWIFT_SDK}/." bundle/sdk/
+          cp -R "${SWIFT_SDK_STAGE}/." bundle/sdk/
           if [ ! -f "bundle/sdk/usr/lib/swift/windows/x86_64/Swift.swiftmodule" ]; then
             echo "::error::Swift.swiftmodule missing from bundle/sdk after SDK copy"
             ls bundle/sdk/usr/lib/swift/windows 2>/dev/null | head -20
