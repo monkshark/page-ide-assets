@@ -186,6 +186,68 @@ jobs:
           }
           echo "VCREDIST_DIR=$((Get-Item $dest).FullName)" >> $env:GITHUB_ENV
 
+      - name: Locate Swift runtime DLLs
+        shell: pwsh
+        run: |
+          # sourcekit-lsp.exe is itself a Swift program: it needs the Swift standard-library
+          # runtime DLLs (swiftCore.dll, Foundation.dll, ...) to even start. On Windows these
+          # live under Runtimes\<ver>\usr\bin, NOT inside the toolchain's usr\bin, so the bundle
+          # must pull them in explicitly.
+          $core = Get-ChildItem -Path "$env:SWIFT_ROOT" -Recurse -Filter "swiftCore.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $core) {
+            Write-Error "swiftCore.dll not found under $env:SWIFT_ROOT — Swift runtime missing"
+            exit 1
+          }
+          $runtimeBin = $core.Directory.FullName
+          Write-Host "Swift runtime bin: $runtimeBin"
+          Get-ChildItem $runtimeBin -Filter *.dll | ForEach-Object { Write-Host "  $($_.Name)" }
+          echo "RUNTIME_BIN=$runtimeBin" >> $env:GITHUB_ENV
+
+      - name: Stage Swift Windows SDK
+        shell: pwsh
+        run: |
+          # swiftc / sourcekit-lsp need the Swift Windows SDK — the standard-library .swiftmodule
+          # tree (Swift.swiftmodule, Foundation.swiftmodule, ...) — to resolve imports and provide
+          # semantic completion. It lives under Platforms\<ver>\Windows.platform\Developer\SDKs\Windows.sdk,
+          # often behind directory junctions that Get-ChildItem -Recurse skips by default. Walk the
+          # known layout explicitly, fall back to a forced recursive search, then copy into a plain
+          # staging dir (dereferencing junctions) so the bash packaging step gets real files.
+          $platforms = Join-Path $env:SWIFT_ROOT "Platforms"
+          $sdk = $null
+          foreach ($p in (Get-ChildItem $platforms -Directory -ErrorAction SilentlyContinue)) {
+            $cand = Join-Path $p.FullName "Windows.platform\Developer\SDKs\Windows.sdk"
+            if (Test-Path $cand) { $sdk = (Get-Item $cand).FullName; break }
+          }
+          if (-not $sdk) {
+            $found = Get-ChildItem -Path "$env:SWIFT_ROOT" -Recurse -Force -Directory -Filter "Windows.sdk" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $sdk = $found.FullName }
+          }
+          if (-not $sdk) {
+            Write-Error "Windows.sdk not found under $env:SWIFT_ROOT — Swift stdlib modules missing"
+            Get-ChildItem $platforms -Recurse -Directory -ErrorAction SilentlyContinue | Select-Object -First 30 FullName | ForEach-Object { Write-Host "  $($_.FullName)" }
+            exit 1
+          }
+          Write-Host "Swift Windows SDK: $sdk"
+          Write-Host "SDK top-level entries:"
+          Get-ChildItem $sdk -Force -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Mode) $($_.Name)" }
+          # robocopy dereferences directory junctions (the SDK's usr/ tree commonly sits behind one),
+          # copying real file content into a plain staging dir. Exit codes < 8 mean success.
+          $stage = Join-Path $env:GITHUB_WORKSPACE "sdk-stage"
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          robocopy $sdk $stage /E /NFL /NDL /NJH /NJS /NP | Out-Null
+          if ($LASTEXITCODE -ge 8) { Write-Error "robocopy failed (exit $LASTEXITCODE)"; exit 1 }
+          $global:LASTEXITCODE = 0
+          $staged = Get-ChildItem -Path $stage -Recurse -Force -Filter "Swift.swiftmodule" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $staged) {
+            Write-Error "Swift.swiftmodule not present in staged SDK — stdlib modules missing"
+            Write-Host "Staged tree (first 60 dirs):"
+            Get-ChildItem $stage -Recurse -Force -Directory -ErrorAction SilentlyContinue | Select-Object -First 60 | ForEach-Object { Write-Host "  $($_.FullName.Substring($stage.Length))" }
+            exit 1
+          }
+          Write-Host "Staged Swift.swiftmodule at: $($staged.FullName.Substring($stage.Length))"
+          echo "SWIFT_SDK_STAGE=$($stage -replace '\\','/')" >> $env:GITHUB_ENV
+
       - name: Package PAGE bundle (Windows)
         id: pack-windows
         shell: bash
@@ -208,8 +270,28 @@ jobs:
             [ -f "$dll" ] || continue
             cp "$dll" bundle/usr/bin/
           done
+          # Bundle Swift stdlib runtime DLLs (swiftCore.dll, Foundation.dll, ...) so sourcekit-lsp.exe
+          # can start without a separate Swift Runtimes install on the user machine.
+          for dll in "${RUNTIME_BIN}"/*.dll; do
+            [ -f "$dll" ] || continue
+            cp "$dll" bundle/usr/bin/
+          done
+          if [ ! -f "bundle/usr/bin/swiftCore.dll" ]; then
+            echo "::error::swiftCore.dll missing from bundle after runtime copy"
+            ls bundle/usr/bin | grep -i swift | head -20
+            exit 1
+          fi
+          # Bundle the Swift Windows SDK (stdlib .swiftmodule tree) under bundle/sdk so swiftc and
+          # sourcekit-lsp can resolve Swift/Foundation imports. PAGE sets SDKROOT to <install>/sdk.
+          mkdir -p bundle/sdk
+          cp -R "${SWIFT_SDK_STAGE}/." bundle/sdk/
+          if [ -z "$(find bundle/sdk -name Swift.swiftmodule -print -quit 2>/dev/null)" ]; then
+            echo "::error::Swift.swiftmodule missing from bundle/sdk after SDK copy"
+            find bundle/sdk -maxdepth 6 -name '*.swiftmodule' 2>/dev/null | head -20
+            exit 1
+          fi
           cat > bundle/page-bundle-manifest.json <<EOF
-          {"swift_version":"$ver","page_os":"windows","page_arch":"x86_64","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","vcruntime_bundled":true}
+          {"swift_version":"$ver","page_os":"windows","page_arch":"x86_64","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","vcruntime_bundled":true,"swift_runtime_bundled":true,"swift_sdk_bundled":true}
           EOF
           outname="page-swift-toolchain-windows-x86_64-${ver}.tar.gz"
           tar -czf "$outname" -C bundle .
@@ -225,6 +307,6 @@ jobs:
           body: |
             Portable Swift toolchain for PAGE IDE.
             Includes swift, swiftc, sourcekit-lsp.
-            Windows bundle includes vcruntime DLLs (self-contained, no VC++ Redistributable required).
+            Windows bundle includes vcruntime + Swift stdlib runtime DLLs + the Swift Windows SDK (stdlib .swiftmodule tree under sdk/). Self-contained: sourcekit-lsp runs and resolves Swift/Foundation imports without a separate Swift install. PAGE sets SDKROOT to <install>/sdk.
           files: ${{ steps.pack-windows.outputs.outname }}
           fail_on_unmatched_files: true
