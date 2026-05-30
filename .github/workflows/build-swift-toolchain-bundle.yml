@@ -186,6 +186,23 @@ jobs:
           }
           echo "VCREDIST_DIR=$((Get-Item $dest).FullName)" >> $env:GITHUB_ENV
 
+      - name: Locate Swift runtime DLLs
+        shell: pwsh
+        run: |
+          # sourcekit-lsp.exe is itself a Swift program: it needs the Swift standard-library
+          # runtime DLLs (swiftCore.dll, Foundation.dll, ...) to even start. On Windows these
+          # live under Runtimes\<ver>\usr\bin, NOT inside the toolchain's usr\bin, so the bundle
+          # must pull them in explicitly.
+          $core = Get-ChildItem -Path "$env:SWIFT_ROOT" -Recurse -Filter "swiftCore.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $core) {
+            Write-Error "swiftCore.dll not found under $env:SWIFT_ROOT — Swift runtime missing"
+            exit 1
+          }
+          $runtimeBin = $core.Directory.FullName
+          Write-Host "Swift runtime bin: $runtimeBin"
+          Get-ChildItem $runtimeBin -Filter *.dll | ForEach-Object { Write-Host "  $($_.Name)" }
+          echo "RUNTIME_BIN=$runtimeBin" >> $env:GITHUB_ENV
+
       - name: Package PAGE bundle (Windows)
         id: pack-windows
         shell: bash
@@ -208,8 +225,19 @@ jobs:
             [ -f "$dll" ] || continue
             cp "$dll" bundle/usr/bin/
           done
+          # Bundle Swift stdlib runtime DLLs (swiftCore.dll, Foundation.dll, ...) so sourcekit-lsp.exe
+          # can start without a separate Swift Runtimes install on the user machine.
+          for dll in "${RUNTIME_BIN}"/*.dll; do
+            [ -f "$dll" ] || continue
+            cp "$dll" bundle/usr/bin/
+          done
+          if [ ! -f "bundle/usr/bin/swiftCore.dll" ]; then
+            echo "::error::swiftCore.dll missing from bundle after runtime copy"
+            ls bundle/usr/bin | grep -i swift | head -20
+            exit 1
+          fi
           cat > bundle/page-bundle-manifest.json <<EOF
-          {"swift_version":"$ver","page_os":"windows","page_arch":"x86_64","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","vcruntime_bundled":true}
+          {"swift_version":"$ver","page_os":"windows","page_arch":"x86_64","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","vcruntime_bundled":true,"swift_runtime_bundled":true}
           EOF
           outname="page-swift-toolchain-windows-x86_64-${ver}.tar.gz"
           tar -czf "$outname" -C bundle .
@@ -225,6 +253,6 @@ jobs:
           body: |
             Portable Swift toolchain for PAGE IDE.
             Includes swift, swiftc, sourcekit-lsp.
-            Windows bundle includes vcruntime DLLs (self-contained, no VC++ Redistributable required).
+            Windows bundle includes vcruntime + Swift stdlib runtime DLLs (self-contained: sourcekit-lsp runs without a separate Swift Runtimes or VC++ Redistributable install).
           files: ${{ steps.pack-windows.outputs.outname }}
           fail_on_unmatched_files: true
