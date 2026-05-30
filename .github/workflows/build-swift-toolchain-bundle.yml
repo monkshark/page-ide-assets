@@ -203,6 +203,28 @@ jobs:
           Get-ChildItem $runtimeBin -Filter *.dll | ForEach-Object { Write-Host "  $($_.Name)" }
           echo "RUNTIME_BIN=$runtimeBin" >> $env:GITHUB_ENV
 
+      - name: Locate Swift Windows SDK
+        shell: pwsh
+        run: |
+          # swiftc / sourcekit-lsp need the Swift Windows SDK — the standard-library .swiftmodule
+          # tree (Swift.swiftmodule, Foundation.swiftmodule, ...) — to resolve imports and provide
+          # semantic completion. It lives under Platforms\...\Windows.platform\Developer\SDKs\Windows.sdk,
+          # separate from the toolchain usr, so the bundle must pull it in explicitly.
+          $sdk = Get-ChildItem -Path "$env:SWIFT_ROOT" -Recurse -Directory -Filter "Windows.sdk" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $sdk) {
+            Write-Error "Windows.sdk not found under $env:SWIFT_ROOT — Swift stdlib modules missing"
+            exit 1
+          }
+          $sdkPath = $sdk.FullName
+          Write-Host "Swift Windows SDK: $sdkPath"
+          $mod = Join-Path $sdkPath "usr\lib\swift\windows\x86_64\Swift.swiftmodule"
+          if (-not (Test-Path $mod)) {
+            Write-Error "Swift.swiftmodule not found at expected SDK path: $mod"
+            Get-ChildItem (Join-Path $sdkPath "usr\lib\swift\windows") -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name)" }
+            exit 1
+          }
+          echo "SWIFT_SDK=$sdkPath" >> $env:GITHUB_ENV
+
       - name: Package PAGE bundle (Windows)
         id: pack-windows
         shell: bash
@@ -236,8 +258,17 @@ jobs:
             ls bundle/usr/bin | grep -i swift | head -20
             exit 1
           fi
+          # Bundle the Swift Windows SDK (stdlib .swiftmodule tree) under bundle/sdk so swiftc and
+          # sourcekit-lsp can resolve Swift/Foundation imports. PAGE sets SDKROOT to <install>/sdk.
+          mkdir -p bundle/sdk
+          cp -R "${SWIFT_SDK}/." bundle/sdk/
+          if [ ! -f "bundle/sdk/usr/lib/swift/windows/x86_64/Swift.swiftmodule" ]; then
+            echo "::error::Swift.swiftmodule missing from bundle/sdk after SDK copy"
+            ls bundle/sdk/usr/lib/swift/windows 2>/dev/null | head -20
+            exit 1
+          fi
           cat > bundle/page-bundle-manifest.json <<EOF
-          {"swift_version":"$ver","page_os":"windows","page_arch":"x86_64","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","vcruntime_bundled":true,"swift_runtime_bundled":true}
+          {"swift_version":"$ver","page_os":"windows","page_arch":"x86_64","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","vcruntime_bundled":true,"swift_runtime_bundled":true,"swift_sdk_bundled":true}
           EOF
           outname="page-swift-toolchain-windows-x86_64-${ver}.tar.gz"
           tar -czf "$outname" -C bundle .
@@ -253,6 +284,6 @@ jobs:
           body: |
             Portable Swift toolchain for PAGE IDE.
             Includes swift, swiftc, sourcekit-lsp.
-            Windows bundle includes vcruntime + Swift stdlib runtime DLLs (self-contained: sourcekit-lsp runs without a separate Swift Runtimes or VC++ Redistributable install).
+            Windows bundle includes vcruntime + Swift stdlib runtime DLLs + the Swift Windows SDK (stdlib .swiftmodule tree under sdk/). Self-contained: sourcekit-lsp runs and resolves Swift/Foundation imports without a separate Swift install. PAGE sets SDKROOT to <install>/sdk.
           files: ${{ steps.pack-windows.outputs.outname }}
           fail_on_unmatched_files: true
