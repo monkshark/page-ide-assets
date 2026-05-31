@@ -135,6 +135,23 @@ jobs:
             fi
           done
 
+          # rust-src (std library source — required by rust-analyzer to load the
+          # sysroot and offer std completions; target-independent, fetched separately)
+          rust_src_included=false
+          src_url="https://static.rust-lang.org/dist/rust-src-${{ matrix.version }}.tar.gz"
+          echo "GET $src_url"
+          if curl -sSfL -o rust-src.tar.gz "$src_url"; then
+            mkdir -p src-extracted
+            tar -xzf rust-src.tar.gz -C src-extracted --strip-components=1
+            if [ -d src-extracted/rust-src/lib/rustlib/src ]; then
+              mkdir -p bundle/lib/rustlib
+              cp -a src-extracted/rust-src/lib/rustlib/src bundle/lib/rustlib/
+              rust_src_included=true
+            fi
+          else
+            echo "::warning::rust-src not available for ${{ matrix.version }} — std completions will be unavailable"
+          fi
+
           # manifest
           cat > bundle/page-bundle-manifest.json <<EOF
           {
@@ -142,7 +159,9 @@ jobs:
             "rust_triple": "${{ matrix.target.rust_triple }}",
             "page_os": "${{ matrix.target.page_os }}",
             "page_arch": "${{ matrix.target.page_arch }}",
+            "rust_src_included": $rust_src_included,
             "upstream_url": "https://static.rust-lang.org/dist/rust-${{ matrix.version }}-${{ matrix.target.rust_triple }}.tar.gz",
+            "rust_src_url": "$src_url",
             "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "built_by": "github-actions / ${{ github.workflow }} / ${{ github.run_id }}"
           }
@@ -152,6 +171,8 @@ jobs:
           ls -la bundle/bin/ || true
           echo "--- bundle/lib (top) ---"
           ls bundle/lib/ | head -20 || true
+          echo "--- bundle/lib/rustlib/src (rust-src) ---"
+          ls bundle/lib/rustlib/src/rust/library 2>/dev/null | head -20 || echo "(rust-src MISSING)"
 
       - name: Pack as PAGE bundle
         if: steps.download.outputs.skip != 'true'
@@ -175,10 +196,13 @@ jobs:
             Prebuilt portable Rust toolchain bundles, auto-fetched by [PAGE IDE](https://github.com/monkshark/page-ide)'s `RustToolchainInstaller`.
 
             Each bundle contains `bin/rustc`, `bin/cargo`, `bin/rustfmt`,
-            `bin/clippy-driver`, and the standard library under `lib/rustlib/`.
-            The upstream Rust standalone installer is downloaded, extracted,
-            and reorganized into a flat `bin/` + `lib/` layout ready for
-            direct use without `rustup` or an install script.
+            `bin/clippy-driver`, the standard library under `lib/rustlib/`,
+            and the standard library source under `lib/rustlib/src/`
+            (the `rust-src` component) so that `rust-analyzer` can load the
+            sysroot and offer std completions.
+            The upstream Rust standalone installer and `rust-src` component are
+            downloaded, extracted, and reorganized into a flat `bin/` + `lib/`
+            layout ready for direct use without `rustup` or an install script.
 
             Assets are added to this tag as new Rust stable releases are built.
 
