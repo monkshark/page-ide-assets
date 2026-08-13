@@ -113,6 +113,16 @@ jobs:
           if [ -d extracted/rustc/lib ]; then
             cp -a extracted/rustc/lib/* bundle/lib/
           fi
+          # rust-analyzer proc-macro server (ships with rustc; without it every derive
+          # macro in a crate stays unexpanded)
+          proc_macro_srv_included=false
+          if [ -d extracted/rustc/libexec ]; then
+            mkdir -p bundle/libexec
+            cp -a extracted/rustc/libexec/* bundle/libexec/
+            proc_macro_srv_included=true
+          else
+            echo "::warning::rustc/libexec missing — rust-analyzer will not expand proc macros"
+          fi
 
           # cargo
           if [ -d extracted/cargo/bin ]; then
@@ -160,6 +170,7 @@ jobs:
             "page_os": "${{ matrix.target.page_os }}",
             "page_arch": "${{ matrix.target.page_arch }}",
             "rust_src_included": $rust_src_included,
+            "proc_macro_srv_included": $proc_macro_srv_included,
             "upstream_url": "https://static.rust-lang.org/dist/rust-${{ matrix.version }}-${{ matrix.target.rust_triple }}.tar.gz",
             "rust_src_url": "$src_url",
             "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
