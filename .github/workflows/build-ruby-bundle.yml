@@ -12,8 +12,8 @@ on:
         default: '0.55.4'
         required: true
       rbs_version:
-        description: 'rbs gem version pin (prism-free)'
-        default: '3.3.0'
+        description: 'rbs gem version pin (prism-free, must parse the signatures solargraph ships)'
+        default: '3.10.4'
         required: true
       release_tag:
         description: 'GitHub release tag (groups Ruby version assets)'
@@ -111,6 +111,12 @@ jobs:
           if (-not (Test-Path $solargraphBat)) { throw "solargraph.bat missing after install: $solargraphBat" }
           Write-Host "==> solargraph version check"
           & $solargraphBat --version
+
+          # --version never loads the type map, so it passes even when rbs cannot read the
+          # signatures solargraph ships. Building an ApiMap is what a hover does, so do that.
+          Write-Host "==> solargraph type map check (rbs must parse rbs/fills)"
+          & "$rubyRoot\bin\ruby.exe" -e "require 'solargraph'; Solargraph::ApiMap.new; puts 'api map ok'"
+          if ($LASTEXITCODE -ne 0) { throw "solargraph cannot build an ApiMap with rbs $rbsVersion" }
 
       - name: Write PAGE manifest into bundle
         shell: pwsh
