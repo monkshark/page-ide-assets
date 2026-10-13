@@ -1,0 +1,29 @@
+name: Keep scheduled workflows alive
+
+on:
+  schedule:
+    - cron: '0 5 1 * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-enable workflows GitHub would switch off for inactivity
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$REPO/actions/workflows" --paginate \
+            --jq '.workflows[] | select(.path | startswith(".github/workflows/")) | [.id, .state, .name] | @tsv' |
+          while IFS=$'\t' read -r id state name; do
+            if [ "$state" = "disabled_manually" ]; then
+              echo "left alone: $name (switched off by hand)"
+              continue
+            fi
+            gh api -X PUT "repos/$REPO/actions/workflows/$id/enable" > /dev/null
+            echo "kept alive: $name (was $state)"
+          done
